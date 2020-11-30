@@ -1,4 +1,10 @@
-A roadmap for causal inference
+This repository contains my homeworks, labs, and final projects for the course **Modern Methods for Causal Inference** taught by Prof. Ivan Diaz.
+
+
+
+*I got rich hands-on experience on causal inference from the beginning to end. Below is my notes describing the roadmap for causal inference.* 
+
+# A roadmap for causal inference
 
 ## Step 0: Specify the scientific question
 
@@ -111,8 +117,6 @@ $E^*(Y_a|W = w) = E(Y|A = a, W = w)$
 
 ##  Step 5 Commit to an estimand as close to question as possible, and a statistical model representing real knowledge 
 
-
-
 ## Step 6: Estimate
 
 ### Implementing a substitution estimator 
@@ -209,8 +213,6 @@ $g(W) = P(A = 1|W)$
 
 ## Step 7: Interpret results
 
-
-
 ## Notes
 
 What is required for causal inference?
@@ -231,8 +233,6 @@ Data + statistical assumptions + causal assumptions (non testable) = causal infe
 - E.g., do we know how to reduce the risk of cancer?
 
 
-
-* 
 
 Identifiability
 
