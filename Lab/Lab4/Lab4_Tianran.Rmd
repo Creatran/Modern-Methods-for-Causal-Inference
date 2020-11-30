@@ -1,0 +1,176 @@
+---
+title: "Lab4_Tianran"
+author: "Tianran Zhang"
+date: "6/15/2020"
+output: 
+  html_document:
+    code_folding: hide
+    theme: readable
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: no
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(dplyr)
+library(kableExtra)
+```
+# Import and explore data 
+
+**0. Import `Lab4_IPTW.csv` and call it `ObsData`.**
+
+```{r}
+ObsData <- read.csv("Lab4_IPTW.csv")
+```
+
+**1. Use the `nrow` function to count the number of sailors in the data set. Assign this number as `n`.**
+
+```{r}
+n <- nrow(ObsData)
+```
+
+**2. Using the `table` or a similar function, check the number of sailors in each covariate strata  without scurvy $A=0$ and the number of sailors in each covariate strata with scurvy $A=1$.** 
+
+```{r}
+ObsData %>%
+  group_by(W1, W2, A) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  arrange(A) %>%
+  kable(label = "# of sailors in each covariate strata") %>%
+  kable_styling()
+```
+
+
+# Implement the IPTW for a binary exposure
+
+**3. Estimate the treatment mechanism $\mathrm{P}(A|W)$, which is the conditional probability of scurvy, given the sailor's characteristics.** Use the following *a priori*-specified parametric regression model: \[
+\mathrm{P}(A=1|W) = expit\big[ \beta_0 + \beta_1 W_1 + \beta_2 W_2  \big]
+\]
+
+```{r}
+fit1 <- glm(A ~ W1 + W2, data = ObsData, family = "binomial")
+coef(fit1)
+```
+
+The estimated $\beta_0$ is `r coef(fit1)[1]`; $\hat{\beta_1}$ is `r coef(fit1)[2]`; $\hat{\beta_2}$ is `r coef(fit1)[3]`.     
+
+**4. Predict each sailor's probability of his observed exposure (scurvy status), given his covariates: $\hat{\mathrm{P}}(A_i|W_i)$}.**
+
+
+```{r}
+prob_1W <- predict(fit1, ObsData, type = "response")
+prob_0W <- 1 - prob_1W
+
+prob_AW <- numeric(n)
+prob_AW[ObsData$A == 1] <- prob_1W[ObsData$A == 1]
+prob_AW[ObsData$A == 0] <- prob_1W[ObsData$A == 0]
+
+summary(prob_AW)
+```
+
+Cause for concern: the minimun probability of A given W is very close to zero, which may lead to a relatively huge weights and higher variation.   
+
+**5. Create a vector `wt` as the inverse of the predicted probabilities. Use the `summary` function to examine the distribution of the weights.**
+```{r}
+wt <- 1/prob_AW
+summary(wt)
+```
+
+**6. Evaluate the IPTW estimand by taking the empirical mean of the weighted outcomes:** \[
+\hat{\theta}_{IPTW} = \frac{1}{n}\sum_{i=1}^n \frac{\mathrm{I}(A_i=1)}{\hat{\mathrm{P}}(A_i|W_i)}Y_i - \frac{1}{n}\sum_{i=1}^n \frac{\mathrm{I}(A_i=0)}{\hat{\mathrm{P}}(A_i|W_i)}Y_i
+\]
+```{r}
+theta.IPTW <- mean(ObsData$Y * wt * ObsData$A) - mean(ObsData$Y * wt * (1 - ObsData$A))
+theta.IPTW %>%
+  round(4)
+```
+**7. Comment on the results.**   
+  The estimated IPTW estimand is 0.5627, which means that the mortality rate is 0.5627 higher with the counterfactural that all sailors suffered from scurvy during the voyage, compared to the counterfactural that all sailors did not suffer from scurvy during the voyage.  
+
+**8. Arbitrarily truncate the weights at 10 and evaluate the IPTW estimand.** *Hint:* The following code copies the weight vector (`wt`) into a new vector (`wt_trunc`) and truncates the weights at 10.
+```{r}
+wt_trunc <- wt
+wt_trunc[wt_trunc > 10] <- 10
+
+theta.IPTW_trunc <- mean(ObsData$Y * wt_trunc * ObsData$A) - mean(ObsData$Y * wt_trunc * (1 - ObsData$A))
+theta.IPTW_trunc %>%
+  round(4)
+```
+he estimated IPTW with truncted weights is 0.6318, which means that the mortality rate is 0.6318 higher with the counterfactural that all sailors suffered from scurvy during the voyage, compared to the counterfactural that all sailors did not suffer from scurvy during the voyage.    
+
+**9. Implement the stabilized IPTW estimator:**
+```{r}
+# Method 1:
+# wt.stab <- numeric(n)
+# wt.stab[ObsData$A == 1] <- n * wt[ObsData$A == 1]/sum(wt[ObsData$A == 1])
+# wt.stab[ObsData$A == 0] <- n * wt[ObsData$A == 0]/sum(wt[ObsData$A == 0])
+# mean(ObsData$A * ObsData$Y * wt.stab) -
+#   mean((1 - ObsData$A) * ObsData$Y * wt.stab)
+
+# Method 2:
+theta_stab.IPTW <-  sum(ObsData$A * ObsData$Y * wt)/sum(ObsData$A * wt) -
+  sum((1 - ObsData$A) * ObsData$Y * wt)/sum((1 - ObsData$A) * wt)
+
+theta_stab.IPTW %>%
+  round(4)
+```
+
+
+# IPTW & Marginal Structural Models 
+## Implement IPTW for a MSM parameter with stabilized weights:
+**9. To complete step 4, sse `glm` to run a logistic regression.** 
+```{r}
+fit2 <- glm(Y ~ A + W2 + A * W2, data = ObsData, weights = wt,
+            family = binomial())
+coef(fit2)
+```
+
+Based on the weighted glm regression results, we can see that:   
+$\hat{\beta_0}$ = `r coef(fit2)[1]`;   
+$\hat{\beta_1}$ = `r coef(fit2)[2]`;   
+$\hat{\beta_2}$ = `r coef(fit2)[3]`;   
+$\hat{\beta_3}$ = `r coef(fit2)[4]`;    
+
+**10. Interpret the IPTW MSM results.**   
+  fitted model: $$\mathrm{E}^*(Y_a |V ) = m(a, V | \beta) =expit\big[ -2.62 + 3.66 a + 2.22 V + 1.86 a^*V \big]$$   
+  The odds ration of mortality would increase by 3.66 changing A = 1 from A = 0, controlling for V = 0.      
+
+## Implement IPTW for a MSM parameter with stabilized weights:
+ **11. To complete Step 3, implement the following:**
+```{r}
+prob_AV_reg <- glm(A ~ as.factor(W2), family = "binomial", 
+                   data = ObsData)
+prob_1V <- predict(prob_AV_reg, ObsData, type = 'response')
+prob_0V <- 1 - prob_1V
+
+prob_AV <- numeric(n)
+prob_AV[ObsData$A == 1] <- prob_1V[ObsData$A == 1]
+prob_AV[ObsData$A == 0] <- prob_1V[ObsData$A == 0]
+
+wt_MSM <- prob_AV/prob_AW
+
+summary(wt_MSM)
+```
+The distribution of the stabilized weights has less variation and is less spread compared to normal weights.    
+
+  **12. To complete step 4, specify the `weights`, the `family`, and the `data` in a `glm()`.**
+```{r}
+fit3 <- glm(Y ~ A + W2 + A * W2, data = ObsData,
+            weights = wt_MSM)
+coef(fit3)
+```
+ 
+We have:   
+$\hat{\beta_0}$ = `r coef(fit3)[1]`;   
+$\hat{\beta_1}$ = `r coef(fit3)[2]`;   
+$\hat{\beta_2}$ = `r coef(fit3)[3]`;   
+$\hat{\beta_3}$ = `r coef(fit3)[4]`;    
+
+**13. Comment on the resulting estimates.**      
+fitted model: $$\mathrm{E}^*(Y_a |V ) = m(a, V | \beta) =expit\big[ -0.015 + 1.008 a + 0.43 V - 0.428 a^*V \big]$$.    
+This estimator is much more stable then the previous one. 
+
+

@@ -1,0 +1,221 @@
+---
+title: "Homework1"
+author: "Tianran Zhang"
+date: "5/13/2020"
+output:
+  html_document:
+    toc_float: true
+    toc: yes
+    toc_depth: 5
+    code_folding: hide  
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ggdag)
+library(dagitty)
+library(ggplot2)
+library(pander)
+```
+
+# Background Story
+## Steps 1-2 of the Roadmap
+**Step 1: Causal model representing real knowledge**
+
+1. Draw the accompanying directed acyclic graph (DAG).    
+
+```{r}
+dag <- dagitty("dag{
+               W1 <- Uw1
+               W2 <- W1
+               W2 <- Uw2
+               A <- W1
+               A <- W2
+               A <- UA
+               Y <- W1 
+               Y <- W2
+               Y <- A
+               Y <- UY
+}")
+tidy_dag <- tidy_dagitty(dag)
+
+ggdag(tidy_dag, layout = "circle")
+```
+
+
+2. Are there any exclusion restrictions or independence assumptions?    
+
+There is no exclusion restrictions nor independence assumptions based on the information provided in this study.
+
+**Step 2: Counterfactuals \& causal parameter**
+
+3. Define the counterfactual outcomes of interest with formal notation and in words.       
+- With formal notation:     
+ $Y_1 <- f_Y(W1, W2, 1, U_Y)$    
+ $Y_0 <- f_Y(W1, W2, 0, U_Y)$     
+
+
+- In words:     
+ Y1: The counterfactual weight gain in pounds for a child if possibly contrary-to-fact the child received RUTF at the beginning of the study.   
+ Y0: The counterfactual weight gain in pounds for a child if possibly contrary-to-fact the child received standard supplement at the beginning of the study.    
+
+
+4. How are counterfactuals derived?     
+This SCM defines a model for the distribution of these counterfactuals. The counterfactuals are uniquely determned by U and F. We use P* to denote the distribution of the counterfactual random variables (Y1, Y0), i.e. $(Y_1, Y_0) \sim P^*$.   
+
+5. Suppose we are interested in the average treatment effect. Specify the target causal parameter. Use formal notation and then explain in words.
+
+The target causal parameter is the average treatment effect (ATE): 
+$$\begin{align}
+\theta^*(P^*) &= E^*[Y_1] - E^*(Y_0) \\ 
+& = E^*[f_Y(W1, W2, 1, U_Y)] - E^*(f_Y(W1, W2, 0, U_Y))
+\end{align}
+$$ 
+This is the difference in the expected counterfactual weight gain in pounds if all children were to receive RUTF at the beginning of the study and the expected counterfactual weight gain in pounds if all children were to receive the standard supplement at the beginning of the study.     
+
+
+
+# A specific data generating process
+
+## Closed form evaluation of the target causal parameter 
+
+**6. Evaluate the target causal parameter $\theta^*$ in closed form (i.e. by hand) for this data generating process.** 
+
+$$\begin{align}
+\theta^*(P^*) &= E^*[Y_1] - E^*(Y_0) \\ 
+&= E^*[4 * 1 + 0.7 * W_1 - 2 * 1 * W_2 + U_Y] - E^*[4 * 0 + 0.7 * W_1 - 2 * 0 * W_2 + U_Y] \\
+&= 4 - 2E^*[W_2] \\
+&= 4 - 2(E^*[W_2 = 1 ||W_1 = 1] * P(W_1 = 1) + E^*[W_2 = 1 ||W_1 = 0] * P(W_1 = 0)) \\
+&= 4 - 2 * (expit(0.5) * 0.2 + expit(0) * 0.8) \\
+&= 2.95
+\end{align}
+$$ 
+
+**7. Translate this data generating process for $\mathsf{P}^*$ into simulations.**
+
+  a. **First set the seed to 252.**
+```{r}
+set.seed(252)
+```
+  b. **Set `n=50,000` as the number of i.i.d. draws from the data generating process.**
+```{r}
+n <- 50000
+```
+  c. **Simulate the background factors $U$.** 
+```{r}
+Uw1 <- runif(n, 0, 1)
+Uw2 <- runif(n, 0, 1)
+Ua <- runif(n, 0, 1)
+Uy <- rnorm(n, 0, 0.3)
+```
+  d. **Evaluate the structural equations $F$ to deterministically generate the endogenous nodes $X$.**   
+```{r}
+W1 <- ifelse(Uw1 < 0.2, 1, 0)
+W2 <- ifelse(Uw2 < plogis(0.5 * W1), 1, 0)
+A <- ifelse(Ua < plogis(W1 * W2), 1, 0)
+fy <- function(A, W1, W2, Uy){
+  4 * A + 0.7 * W1 - 2 * A * W2 + Uy
+}
+Y <- fy(A, W1, W2, Uy)
+```
+  e. **Intervene to set the supplement to RUTF ($A=1$) and generate counterfactual outcomes $Y_1$ for $n$ units. Then intervene to set the supplement to the standard ($A=0$) and generate counterfactual outcomes $Y_0$ for $n$ units.**
+```{r}
+Y1 <- fy(1, W1, W2, Uy)
+Y0 <- fy(0, W1, W2, Uy)
+```
+  f. **Create a data frame to hold the values of the endogenous factors $(W_1,W_2,A,Y)$ and the counterfactual outcomes $Y_1$ and $Y_0$. The rows are the $n$ children and the columns are their characteristics. Use the `head` and `summary` to examine the resulting data.**
+```{r}
+dat <- data.frame(W1, W2, A, Y, Y1, Y0)
+pander(head(dat))
+pander(summary(dat))
+```
+
+**8. Evaluate the causal parameter $\theta^*$ for this population of 50,000 units.**
+```{r}
+mean(dat$Y1) -  mean(dat$Y0)
+```
+
+**9. Interpret $\theta^*$.**
+
+The difference in expected weight gain between children who received RUTF and those who received the standard supplement is 2.949 for this population of 50,000 units, which shows evidence that RUTF would increase the child's weight gain in pounds.        
+
+## Defining the target causal parameter with a working MSM
+
+## A specific data generating process:
+**10. For $n=5,000$ children, generate the exogenous factors $U$ and the pre-intervention covariates $(V, W_1,W_2)$. Then set $A=1$ to generate the counterfactual weight gain under RUTF $Y_1$. Likewise, set $A=0$ to generate the counterfactual weight gain under the standard supplement $Y_0$.**
+
+```{r}
+# set seed
+set.seed(252)
+
+# set n
+n = 5000
+
+# Generate the exogenous factors U
+Uv <- runif(n, 0, 3)
+Uw1 <- runif(n, 0, 1)
+Uw2 <- runif(n, 0, 1)
+Ua <- runif(n, 0, 1)
+Uy <- rnorm(n, 0, 0.1)
+
+# Generate the pre-intervention covariates
+V <- 2 + Uv
+W1 <- ifelse(Uw1 < 0.2, 1, 0)
+W2 <- ifelse(Uw2 < plogis(0.5 * W1), 1, 0)
+
+# Fy2
+fy2 <- function(A, W1, W2, V, Uy){
+  4 * A + 0.7 * W1 - 2 * A * W2 + .3 * V - .3 * A * V + Uy
+}
+# A = 1
+Y1 <- fy2(1, W1, W2, V, Uy)
+
+# A = 0
+Y0 <- fy2(0, W1, W2, V, Uy)
+```
+
+
+**11. Create a data frame `X_msm`  consisting of age $V$, the set treatment levels $a$, and the corresponding outcomes $Y_a$.**
+```{r}
+X_msm <- rbind(data.frame(V, a = 1, Ya = Y1), data.frame(V, a = 0, Ya = Y0))
+
+pander(head(X_msm))
+```
+
+
+**12. Evaluate the target causal parameter.** 
+
+```{r}
+reg1 <- glm(Ya ~ a*V, data = X_msm)
+pander(summary(reg1))
+```
+
+
+The estimated parameters are $\beta_0 = 0.1619$, $\beta_1 = 2.912$, $\beta_3 = 0.2953$, $\beta_4 = -0.2901$.     
+Thus, we have: a = 0.1619 + 2.912 a + 0.2953 V - 0.2901 a * V.
+
+
+**13. Plot of the counterfactual outcomes $Y_a$ as a function of age ($V$) and treatment group ($a$).**    
+```{r}
+ggplot(data = X_msm) +
+  geom_point(aes(x = V, y = Ya, color = factor(a)), size = .5, alpha = .5) + 
+  geom_smooth(method = glm, aes(x = V, y = Ya, group = a, color = factor(a)), lwd = 2) + 
+  ggtitle("weight gain as a function of age and treatment group") +
+  xlab("Age") +
+  ylab("Weight gain") + 
+  labs(color = "Treatment group") +
+  scale_color_discrete(labels = c("Standard Supplement", "RUTF"))
+
+```
+
+**14. Interpret the results.**     
+Based on the glm model, we have: a = 0.1619 + 2.912 a + 0.2953 V - 0.2901 a * V.   
+$\beta_0 = 0.1619$: The mean weight gain is 0.1619 pounds for children who receved standard supplement at the age of 0.  
+$\beta_1 = 2.912$: The expected weight gain would increase by 2.912 for children who received RUTF compared to those who received standard supplement at the age of 0.  
+$\beta_3 = 0.2953$: The expected weight gain would increase by 0.2953 for one year increase in age, when children received standard supplement.            
+$\beta_4 = -0.2901$: The expected weight gain would decrease by -2.901 for one year increase in age between RUTF treatment group and the standard supplement group.     
+
+Based on the plot, we can see that controlling for children's ages, the weight gains are higher in children who received RUTF compared to those who received the standard supplement at the beginning of the study. Within the treatment group that children received RUTF, the weight gains are stable as children's ages increase. However, in the treatment group that children received standard supplement, the weight gains are increasing as children's ages increase.
+
+

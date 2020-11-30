@@ -1,0 +1,263 @@
+---
+title: "hw5_Tianran"
+author: "Tianran Zhang"
+date: "6/24/2020"
+output: 
+  html_document:
+    code_folding: hide
+    theme: readable
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: no
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(readr)
+library(tidyverse)
+
+
+```
+
+
+
+# Examine the data set
+
+**1. Import `rhw4_data.csv` and save it as `ObsData`.** 
+```{r, include=FALSE}
+ObsData <- read.csv("hw5_data.csv")
+names(ObsData)
+tail(ObsData)
+summary(ObsData)
+```
+
+**2. Assign the number of children in your data set as `n`.**
+```{r}
+n <- nrow(ObsData)
+```
+
+# Code a discrete Super Learner to select the estimator with the lowest cross-validated risk estimate
+
+
+
+**3. Briefly discuss the motivation for using discrete Super Learner (a.k.a. the cross-validation selector).**   
+
+The number of parameters grows exponentially with dimension of (A, W) when estimating with the non-parametric statistical model (curse of dimensionality). While estimation with a misspecified parametric regression would give us misleading conclusions due to bias and wrong variance estimation. So, we need to look at the data in a rigorous (supervised) way.    
+We could write down a set of possible candidate parametric regressions, and discrete Super Learner (Cross-validation) allows us to compare these algorithms and select the one with the best performance on validation data. 
+
+                                                                                              
+**4. Create the following transformed variables and add them to data frame `ObsData`.**
+
+```{r}
+sinW3<- sin(ObsData$W3)
+W4sq <- ObsData$W4*ObsData$W4
+cosW5 <- cos(ObsData$W5)
+ObsData <- cbind(ObsData, sinW3, W4sq, cosW5)
+```
+
+**5. Split the data into $V=20$ folds.**
+```{r}
+Fold <- rep(1:20, each = n/20)
+```
+**6. Create a prediction matrix `Pred` to hold the cross-validated predictions for each community according to each candidate algorithm.**
+```{r}
+Pred <- data.frame(matrix(nrow = n, ncol = 4))
+colnames(Pred) <- c("a", "b", "c", "d")
+```
+**7. Create an empty matrix `CV_risk` to hold the cross-validated risk for each algorithm, evaluated at each fold.**
+```{r}
+CV_risk <- data.frame(matrix(nrow = 20, ncol = 4))
+colnames(CV_risk) <- c("a", "b", "c", "d")
+```
+**8. Use  a `for` loop to fit each estimator on the training set (19/20 of the data); predict the expected MUAC for the communities in the validation set (1/20 of the data), and evaluate the cross-validated risk.**
+```{r}
+for (V in 1:20) {
+  valid <- ObsData[Fold == V, ]
+  train <- ObsData[Fold != V, ]
+  
+  fita <- glm(Y ~ W1 + W2 + sinW3 + W4sq, data = train)
+  fitb <- glm(Y ~ W1 + W2 + W4 + cosW5, data = train)
+  fitc <- glm(Y ~ W2 + W3 + W5 + W2 * W5 + W4sq + cosW5, 
+              data = train)
+  fitd <- glm(Y ~ W1 + W2 + W5 + W1 * W2 + W1 * W5 + W2 * W5 + 
+                W1 * W2 * W5, data = train)
+  
+  preda <- predict(fita, valid, type = "response")
+  predb <- predict(fitb, valid, type = "response")
+  predc <- predict(fitc, valid, type = "response")
+  predd <- predict(fitd, valid, type = "response")
+  
+  Pred[Fold == V, ] <- data.frame(preda, predb, predc, predd)
+  
+  CV_risk[V, ] <- apply(Pred[Fold == V, ], 2, function(x){
+    mean((x - valid$Y)^2)
+  })
+}
+
+```
+
+**9. Select the algorithm with the lowest average cross-validated risk across the folds.**
+```{r}
+apply(CV_risk, 2, mean)
+```
+
+Above are the average cross-validated risk across the folds. Algorithm C has the lowest risk of 7.76.  
+
+**10. Fit the chosen algorithm on all the data.**
+
+```{r}
+fit1 <- glm(Y ~ W2 + W3 + W5 + W2 * W5 + W4sq + cosW5, data = ObsData)
+# summary(fit1)
+```
+
+**11. How can we come up with an even better prediction function than the one selected?**
+
+The Discrete Super Learner only choose one best algorithm. To get a better prediction function, we could consider the Ensemble Super Learner which will combine all algorithms by adding weights to their predictions.    
+ 
+
+# Add weights to your Super Learner
+
+
+**12. Modify the code given in Lab 5 to code the optimal convex combination of weights using the MSE as your loss function.**  
+
+
+```{r}
+library(nnls)
+
+# Create a new data frame with the observed outcome (Y) and CV-predictions from the 4 algorithms
+X<- cbind(ObsData$Y, Pred)
+
+## estimate weights using non-linear least squares 
+weights <- nnls(as.matrix(X[,2:5]), X[,1])$x
+
+# then normalize to sum to 1 by dividing by the sum of the weights
+alpha <- as.matrix(weights/sum(weights))
+```
+
+**13. Apply your weights to generate the ensemble based predictions.**  
+
+```{r}
+## fit all algorithms to original data & generate predictions
+PredA<- predict(glm(Y ~ W1 + W2 + sinW3 + W4sq, data=ObsData),
+                type='response')
+PredB<- predict(glm(Y ~ W1 + W2 + W4 + cosW5, data=ObsData),
+                type='response')
+PredC<- predict(glm(Y ~ W2 + W3 + W5 + W2 * W5 + W4sq + cosW5,
+                    data=ObsData), type='response')
+PredD<- predict(glm(Y ~ W1 + W2 + W5 + W1 * W2 + W1 * W5 + 
+                    W2 * W5 + W1 * W2 * W5, data=ObsData),
+                type='response')
+
+Pred <- cbind(PredA, PredB, PredC, PredD)
+
+# Take a weighted combination of predictions using nnls coeficients as weights
+Y_SL <- Pred%*%alpha
+```
+
+
+**14. What is the risk (MSE) from your hand-coded ensemble Super Learner model? How does it compare to the risk from your hand-coded discrete Super Learner model?**
+
+The risk of my hand-coded ensemble Super Learner model:
+```{r}
+# compare the (non-cross-validated) weighted predictions between
+# our our hand-coded ensemble SuperLearner and our hand-coded 
+# discrete Super Learner model.  
+
+mean((ObsData$Y - Y_SL)^2)
+```
+The risk from my hand-coded discrete Super Learner model: 
+```{r}
+apply(CV_risk, 2, mean)
+```
+
+It seems my hand-coded ensemble Super Learner model yields a risk of 4.13, which is much smaller than the lowest risk of 7.76 generated from the hand-coded discrete Spuer Learner model. It is obvious that ensemble Super Learner model performs better than sidcrete Super Learner model.    
+       
+
+# Use the `SuperLearner` package to build the best combination of algorithms
+
+**15. Load the `SuperLearner` package and set the seed to 252.**
+```{r}
+library(SuperLearner)
+set.seed(252)
+```
+**16. Use the `source` function to load script file `hw5_wrappers.R`, which includes  the wrapper functions for the *a priori*-specified parametric regressions.**
+```{r}
+source("hw5_wrappers.R")
+```
+
+**17. Specify the algorithms to be included in Super Learner's library.** 
+```{r}
+SL_library <- c('SL.glm.EstA', 'SL.glm.EstB', 'SL.glm.EstC', 'SL.glm.EstD')
+```
+
+**18. Optional bonus problem:** Briefly (1-2 sentences) describe the algorithms corresponding to `SL.ridge`, `SL.rpartPrune`, `SL.polymars` and `SL.mean`.      
+* *SL.ridge*: It fits a ridge regression with gaussian data. Ridge regression is used when multiple regression data suffers from multicollinearity.      
+* *SL.rpartPrune*: It fits a recursive partitioning and regression trees, and can deal with both gaussian data and binomial data.     
+* *SL.polymars*: It fits adaptive regression with piecewise linear splines to model the response. It can deal with both gaussian data and binomial data.       
+* *SL.mean*: It simply outputs the marginal mean of the outcome.    
+   
+
+**19. Create data frame `X` with the predictor variables. Run the `SuperLearner` function.** 
+```{r}
+X <- ObsData[, -6]
+SL.out <- SuperLearner(Y = ObsData$Y, X = X, 
+                       SL.library = SL_library, 
+                       cvControl = list(V = 20))
+SL.out
+```
+**20. Explain the output to relevant policy makers and stake-holders for the childhood nutrition project. What do the columns `Risk` and `Coef` mean?**
+
+The column `Risk` means the estimated expectation of the MSL loss function for each method derived from 20-folds CV. For example, for algorithm A, its estimated risk can be written as $\frac{1}{n}\sum_{i = 1}^n(\hat{Y}_{ai} - Y_i)^2$.     
+The columns `Coef` mean the optimal weights apply to each algorithm, which is calculated based on the observed data. They are non-negative and sum up to 1. The Super Learner prediction function can be written as $Y \sim \alpha_a\hat{Y_a} + \alpha_b\hat{Y_b} + \alpha_c\hat{Y_c} + \alpha_d\hat{Y_d}$. It appears the ensemble Super Learner function puts more weights on the first three algorithms since the coefficient for function D is 0.    
+
+**21. Are the cross-validated risks from `SuperLearner` close to those obtained by your code?**      
+The cross-valudated risks from superLearner:  
+```{r}
+mean((ObsData$Y - SL.out$SL.predict)^2)
+```
+The cv risks from my code:  
+```{r}
+mean((ObsData$Y - Y_SL)^2)
+```
+
+Tthe the cross-validated risks from `SuperLearner` is the same with that obtained by my code.   
+
+# Implement `CV.SuperLearner`
+
+**22. Explain why we need `CV.SuperLearner`.**      
+Super Learner is a data-adaptive algorithm, and the final prediction is built from all observed data. To evaluate the performance of our Super Learner, we need `CV.SuperLearner` and use the data that was not used in building the prediction function.    
+
+**23. Run `CV.SuperLearner`.** 
+```{r, warning=F}
+CV_SL_out <- CV.SuperLearner(Y = ObsData$Y, X = X, 
+                             SL.library = SL_library,
+                             cvControl = list((V = 5)),
+                             innerCvControl = list(list(V = 20)))
+```
+
+
+**24. Explore the output. Only include the output from the `summary` function in your knitted report, but comment on the other output.** 
+
+```{r}
+# summary of the output of CV.SuperLearner
+summary(CV_SL_out)
+```
+
+```{r, eval = F}
+#
+# returns the output for each call to Super Learner
+CV_SL_out$AllSL
+#
+# condensed version of the output from CV.SL.out$AllSL with only the coefficients
+# for each Super Learner run
+CV_SL_out$coef
+#
+# returns the algorithm with lowest CV risk (discrete Super Learner) at each step.
+CV_SL_out$whichDiscrete
+```
+   
+We partition the data into 5 folds. We ran SL within each fold and calculated the 20-fold cross-validated risk for each function. At each step, algorithm C has the the lowest risk and largest coefficients compared to other three algorithms.     
+In the summary output, ensemble Super Learner which combines all algoritms has the lowest risk and standard error. Discrete SL has the same performance with the best single algorithm C.      
+

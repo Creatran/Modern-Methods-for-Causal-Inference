@@ -1,0 +1,254 @@
+---
+title: "Lab 5: Superlearning"
+subtitle: "Modern Methods for Causal Inference"
+date: "Due June 24, 2020 at 11:59PM on Canvas"
+output: 
+  wcmtheme::wcm_html: 
+    toc: true
+    toc_float: true
+    number_toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Background
+
+Suppose you are asked to build a predictive model for whether a person has Interstitial Lung Disease (ILD). ILD is a pulmonary disease characterized by severe scarring of the lungs and permanent prevention of their ability to carry oxygen. ILD is officially diagnosed with a comprehensive CT exam by a radiologist. Radiologists' time is very expensive, however, and a pulmonologist who wants to increase the possibility for diagnosis of ILD in underserved areas wants to know how well a predictive model with only a few easy to obtain patient characteristics can perform.
+
+Suppose you have the following data on 1000 patients whose ILD status (`Y`: yes = `1` and no = `0`) was comprehensively diagnosed by a radiologist using the patients' CT scans. 
+
+- $W_1$: Sex (Male = `1`, Female = `0`)
+
+- $W_2$: Distance, in hundreds of meters, that the patient can walk within six minutes.
+
+- $W_3$: Severity of dyspnea (shortness of breath), a 0-5 summary measure from the St. George's Respiratory Questionnaire. A patient with a score of 0 is not experiencing dyspnea.
+
+- $W_4$: Proportion of lung attenuation (calculated by an automated program using pixels from a patient's CT scan).
+
+Let $W = \{W_1, W_2, W_3, W_4\}$ represent the vector of these predictors.
+
+# Import the data set 
+
+**0. Read in the csv `lab5_superlearner_data.csv` and save it as `ObsData`.**
+
+  a. Use the `names`, `head`, and `summary` functions to explore the data.
+  
+  b. Use `nrow` to count the number of patients in this data set. Assign it to `n`.
+  
+  c. Set your seed to `1`.
+
+# The curse of dimensionality
+
+Suppose your investigator wants to first see how good of a predictive model she can build using only the patient's sex and their severity of dyspnea. Since these are categorical characteristics, you decide to estimate the conditional probability of a positive ILD diagnosis, given these characteristics, $\mathrm{E}[Y|W_1,W_3] = \mathrm{P}(Y=1|W_1, W_3)$, with the non-parametric maximum likelihood estimator (NPMLE).
+
+**1. Use the `table` function to count the number of patients within strata of sex $W_1$ and dyspnea category $W_3$.**
+
+**2. Are you wary of predicting whether an individual has ILD via the sample proportion in each strata (i.e. the NPMLE)?** For example, try estimating the conditional probability of a positive ILD diagnosis for females : $\mathrm{E}(Y|W_1=0,W_3=5) = \mathrm{P}(Y=1|W_1=0,W_3=5)$.
+
+**Take home message:** In many data applications, our statistical model is non-parametric but the NPMLE (ie a fully stratified approach) is not well defined. There can be strata with zero or only a few observations.
+
+Thereby, we need an alternative estimation approach. We could use a lower dimensional parametric model to describe the probability of finding treasure given predictor variables.  However, we often do not know enough to *a priori*-specify  the correct parametric model for the conditional mean outcome. If the specified parametric model is incorrect, our point estimates and inference may be biased. Trying a bunch of parametric regressions, looking at the results, fiddling with the regression specifications, and choosing the "best" (using arbitrary criteria) also leads to biased point estimates and misleading inference. Therefore, we are going to use discrete Super Learner to choose between a library of *a priori*-specified candidate prediction algorithms, using cross-valdiation, and according to our selected loss function.
+
+# Code discrete Super Learner to select the estimator with the smallest cross-validated risk estimate.
+
+The first step is to choose a loss function. For the purposes of this lab, we are going to use the L2 (MSE) loss function as our measure of performance of an estimator. The expectation of the loss function under the true data generating distribution $\mathrm{P}$ is called the *risk*. 
+
+The second step is to define a library of candidate estimators. Suppose that prior to the analysis, you and your pulmonary collaborator came up with the following candidate estimators to include in the library for the discrete Super Learner (i.e. the cross-validation selector): \begin{align*}
+m^a(W) &= logit^{-1} \big[\beta_0 + \beta_1 W_1 + \beta_2 W_3 + \beta_3 W_1^*W_3 + \beta_5 W_4^2 \big] \\
+m^b(W) &= logit^{-1} \big[\beta_0 + \beta_1 W_1 + \beta_2 log(W2) + \beta_3 W_3 + \beta_4 W_4 + \beta_5 W_3^*W_4 \big] \\
+m^c(W) &= logit^{-1} \big[\beta_0 + \beta_1 W_1 + \beta_2 W2 + \beta_3 W_4 + \beta_4 W_1^*W2 + \beta_5 W_1^*W_4 + \beta_6 W2^*W_4 + \beta_7 W_1^*W2^*W_4 \big] \\
+m^d(W) &= logit^{-1} \big[\beta_0 + \beta_1 W_1 + \beta_2 sin(W2^2) + \beta_3 W_1^*sin(W2^2) + \beta_4 log(W_4) \big]
+\end{align*}
+where $W=(W_1,W2,W_3,W_4)$. 
+
+Therefore, the library consists of four parametric regression, denoted with the superscripts $a-d$. Using cross-validation, we can generate an "honest" estimate of risk for each candidate $Q(W)= \mathrm{E}[Y|W]$. We will choose the candidate estimator with the smallest cross-validated risk estimate.  Here, we are going to select the estimator with the lowest cross-validated mean squared prediction error. 
+
+**3. Which algorithm do you think will do best at predicting whether a patient be given a clinical diagnosis of ILD by a radiologist?**
+
+**4. Create the following transformed variables and add them to data frame `ObsData`.**
+
+```{r, eval=F}
+W2sq <- ObsData$W2*ObsData$W2
+sinW2sq <- sin(W2sq)
+logW2 <- log(ObsData$W2)
+W4sq <- ObsData$W4*ObsData$W4
+sinW4sq <- sin(W4sq)
+logW4 <- log(ObsData$W4)
+```
+
+**5. Split the data into $V=10$ folds.** With $n=1000$ observations total, we want $n/10=100$ in each fold. For simplicity let us define the first hundered observations to be the first fold, the second hundred to be the second fold, and so forth.
+
+```{r, eval=F}
+fold <- c(rep(1,100), rep(2,100), rep(3,100), rep(4,100), rep(5,100),
+          rep(6,100), rep(7,100), rep(8,100), rep(9,100), rep(10,100))
+```
+
+Alternatively you could use the `sample` function without replacement to get 10 folds of size 100.
+
+**6. Create a data frame `Pred` with 1000 rows (one for each patient) and four columns to hold the cross-validated predictions for each patient according to each candidate algorithm.**
+
+**7. Create a data frame `CV_risk` with 10 rows and four columns to hold the cross-validated riks for each algorithm, evaluated at each fold.**
+
+**8. To implement discrete Super Learner, use a `for` loop to fit each estimator on the training set (9/10 of the data);  predict the probability of ILD for the corresponding validation set (1/10 of the data), and evaluate the cross-validated risk.**
+
+  a. Since each fold needs to serve as the training set, have the `for` loop run from `V` is 1 to 10. First,  the observations in `fold=1` will serve as the validation set and other 900 observations as the training set. Then the observations in `fold=2` will be the validation set and the other 900 observations as the training set... Finally, the observations in `fold=10` will be the validation set and the other 900 observations as the training set.
+
+  b. Create the validation set as a data frame `valid` consisting of observations with `fold` equal to `V`. *Hint:* Use the logical `==` to  select the rows of `ObsData` with `fold==V`.
+
+  c. Create the training set as a data frame `train` consisting obserations with `fold` not equal to `V`. *Hint:* Use the logical `!=` to select the rows of `ObsData` with `fold!=V`.
+
+  d. Use `glm` to fit each algorithm on the training set. Be sure to specify `family= "binomial"` for the logistic regression and `data` as the training set `train`.
+
+  e. For each algorithm, predict the probability of finding treasure for each ship in the validation set. Be sure to specify the `type='response'` and `newdata` as the validation set `valid`.
+
+  f. Save the cross-validated predictions for each ship in the validation set at the appropriate row in the matrix `Pred`.
+
+  g. Estimate the cross-validated risk estimate for each algorithm based on the L2 loss function. Take the average of the squared difference between the outcomes $Y$ in the validation set and their cross-validated predicted probabilities. Assign the cross-validated risks as a row in the data frame `CV_risk`.
+  
+**9. Select the algorithim with the lowest average cross-validated risk across the folds.** To determine which has the lowest cv-risk, apply the `colMeans` function to the matrix `CV_risk`.
+  
+**10. Fit the "chosen" algorithm on all the data.** These are your discrete superlearner predictions.
+
+# Use the `SuperLearner` package to build the best combination of algorithms.
+
+We will be looking at code from both the `SuperLearner` and the `sl3` package. The latter is part of an `R` ecosystem of packages for targeted learning, `tlverse`, and runs on top of the older package for ensemble machine learning prediction, `SuperLearner`, allowing for a smoother user interface. For this lab, we will use `SuperLearner`, but look at code for `sl3`, which may be easier to use in practice.
+
+Helpful resources for `SuperLearner` and `sl3` can be found here: 
+
+- https://cran.r-project.org/web/packages/SuperLearner/vignettes/Guide-to-SuperLearner.html
+
+- http://tlverse.org/tlverse-handbook/ensemble-machine-learning.html
+
+**11. Install `SuperLearner` from CRAN and `sl3` from the `tlverse` github. Load both packages and `tidyverse` if you haven't already.**
+
+```{r, eval=F}
+install.packages("SuperLearner")
+devtools::install_github("tlverse/sl3")
+library(SuperLearner)
+library(sl3)
+library(tidyverse)
+```
+
+  a. Read the help file using `?SuperLearner`.
+
+  b. The `SuperLearner` package uses wrapper functions. Use the `listWrappers()` function to see built-in candidate algorithms. For example, explore the wrapper function for stepwise regression `SL.step`:
+
+```{r, eval=F}
+SL.step
+```
+
+**12. Use the `source` function to load script file `lab5_superlearner_wrappers.R`, which includes code for the wrapper functions for the *a priori*-specified parametric estimators.**
+
+```{r}
+source("lab5_superlearner_wrappers.R")
+```
+
+**13. Specify the algorithms to be included in SuperLearner's library.** Create the following vector `SL_library` of character strings.
+
+```{r}
+SL_library<- c('SL_glm_EstA', 'SL_glm_EstB', 'SL_glm_EstC', 'SL_glm_EstD')
+```
+
+Note: We are choosing these simple algorithms to reflect the models we've explicitly specified already. If you were actually try to make a best prediction model you would probably want several non-parametric estimators (which we will see in the `sl3` code).
+
+**14. Create data frame `X` with the predictor variables.** Include the original predictor variables as well as the transformed variables.
+
+**15. Run the `SuperLearner`function. Be sure to specify the outcome `Y`, the predictors `X`, the library `SL.library` and the `family`. Also include `cvControl=list(V=10)` in order to get 10-fold cross-validation.**
+
+**16. Which algorithm had the lowest cross-validated risk?  Which algorithm was given the largest weight when building the convex combination of algorithms? Are the cross-validated risks from `SuperLearner` close to those obtained by your code?**
+
+# Coding the weights for your hand-coded Super Learner
+
+**17. Try the following code to create the weights from your hand-coded Super Learner when the goal is to minimize the expected L2 loss function.**
+
+```{r, eval=F}
+library(nnls)
+
+# Create a new data frame with the observed outcome (Y) and CV-predictions from the 4 algorithms
+X<- cbind(ObsData$Y, Pred)
+head(X)
+
+## estimate weights using non-linear least squares 
+weights <- nnls(as.matrix(X[,2:5]), X[,1])$x
+
+# then normalize to sum to 1 by dividing by the sum of the weights
+alpha <- as.matrix(weights/sum(weights))
+round(alpha,3)
+# compare to the package's coefficients (you'll need to save your SuperLearner fit as SL_out for this to work)
+SL_out
+
+## fit all algorithms to original data & generate predictions
+PredA<- predict(glm(Y~ W1*W3 + W4sq, family='binomial',
+                   data=ObsData), type='response')
+PredB<- predict(glm(Y~ W1+ logW2 + W3*W4, family='binomial', 
+                   data=ObsData), type='response')
+PredC<- predict(glm(Y~ W1*W2*W4, family='binomial', 
+                   data=ObsData), type='response')
+PredD<- predict(glm(Y~ W1*sinW2sq+ logW4, family='binomial', 
+                   data=ObsData), type='response')
+
+Pred <- cbind(PredA, PredB, PredC, PredD)
+
+# Take a weighted combination of predictions using nnls coeficients as weights
+Y_SL <- Pred%*%alpha
+
+# compare the (non-cross-validated) weighted predictions between
+# our our hand-coded ensemble SuperLearner and the package
+mean((ObsData$Y - Y_SL)^2)
+mean((ObsData$Y - SL_out$SL.predict)^2)
+```
+
+# Evaluate the performance of Super Learner
+
+Read the help file on `CV.SuperLearner` using the `?` function. In short, this function is partitioning the data into $V^*=10$ folds, running the whole Super Learner algorithm in each training set (9/10 of the data), evaluating the performance on the corresponding valdiation set (1/10 of the data), and rotating through the folds. Each training set itself will be partitioned into $V=10$ folds in order to run `SuperLearner`.
+
+**18. Evaluate the performance of the Super Learner algorithm by running `CV.SuperLearner`.** Again be sure to specify the outcome, predictors, family, SuperLearner library, and folds. Explore the output with the `summary` function.
+
+
+# Appendix - Using `sl3`
+
+We will look at the in-progress package `sl3` from `tlverse`. `sl3` is not on CRAN yet but offers a potentially improved user-interface from `SuperLearner`. Let's look at an example of how we might weight three prediction models using superlearning: random forests, generalized linear regression, and penalized regression (LASSO, using `glmnet`).
+
+First we will define a machine learning "task" by creating an `sl3_Task` object. This will help us keep track of our predictors and outcome (and other metadata if we were to have weights or ids to include in our model).
+
+```{r, eval=F}
+outcome <- "Y"
+covars <- ObsData %>% select(-Y) %>% names()
+
+ild_task <-
+  make_sl3_Task(
+  data = ObsData,
+  covariates = covars,
+  outcome = outcome,
+  folds= origami::make_folds(ObsData, V=10))
+```
+
+Then we can look at the potential learners, or models, we can fit:
+
+```{r, eval=F}
+sl3_list_learners("binomial")
+```
+
+We can choose any number of learners from this list with the `make_learner()` function, and put them in a "stack" of candidate models.
+
+```{r, eval=F}
+lrnr_rf <- make_learner(Lrnr_randomForest)
+lrnr_glm <- make_learner(Lrnr_glm)
+lrnr_glmnet <- make_learner(Lrnr_glmnet)
+
+stack <- make_learner(Stack, lrnr_rf, lrnr_glm, lrnr_glmnet)
+```
+
+Finally, we are ready to fit our superlearning model.
+
+```{r, eval=F}
+sl <- Lrnr_sl$new(learners=stack)
+
+sl_fit <- sl$train(ild_task)
+sl_fit
+```
+
+
+

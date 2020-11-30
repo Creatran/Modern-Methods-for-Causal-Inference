@@ -1,0 +1,280 @@
+---
+title: "Lab6_Tianran"
+author: "Tianran Zhang"
+date: "7/13/2020"
+output: 
+  html_document:
+    code_folding: hide
+    theme: readable
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: no
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F)
+library(readr)
+library(SuperLearner)
+library(gam)
+library(tmle)
+```
+
+# Data import
+
+**1. Set the seed to 252, import `RLab6_TMLE.csv`, assign it to dataframe `ObsData`, and assign the number of students in the data set to `n`.**
+```{r}
+set.seed(252)
+ObsData <- read.csv("RLab6_TMLE.csv")
+ObsData <- ObsData[, -1]
+n <- nrow(ObsData)
+```
+
+**2. Explore the data set using the `summary`, `head`, and any other functions to help you understand the data. Only include code; do not evaluate this chunk of code when you turn in your assignment.**
+```{r, eval = F}
+summary(ObsData)
+head(ObsData)
+sum(is.na(ObsData))
+str(ObsData)
+```
+# Implement TMLE for the G-computation estimand
+
+**3. Load the `SuperLearner` package. Then specify the Super Learner library with the following algorithms: `SL.glm`, `SL.step` and `SL.gam`.** In practice, we would want to use a larger library with a mixture of simple (e.g. parametric) and more aggressive libraries.  
+
+```{r}
+SL.library <- c('SL.glm', 'SL.step', 'SL.gam')
+```
+
+
+**4. Use Super Learner to estimate $\mathrm{E}(Y|A, W)$, which is the expected reading comprehension difference given the exposure and baseline covariates.**
+```{r}
+# (a)
+X1 <- X0 <- X <- ObsData[, c("A", "W1", "W2", "W3", "W4")]
+X1$A <- 1
+X0$A <- 0
+
+# (b)
+SL.outcome <- SuperLearner(Y = ObsData$Y, X = X, 
+                           SL.library = SL.library, 
+                           family = binomial)
+SL.outcome
+  
+# (c)
+m_AW <- predict(SL.outcome, newdata = ObsData)$pred
+
+# (d)
+m_1W <- predict(SL.outcome, newdata = X1)$pred
+
+# (e)
+m_0W <- predict(SL.outcome, newdata = X0)$pred
+
+
+# (f)
+theta.g <- mean(m_1W) - mean(m_0W)
+```
+
+The simple substitution estimator using Super Learner is `r theta.g`.    
+
+**5. Estimate the exposure mechanism $g(W) = \mathrm{P}(A=1|W)$, which is the conditional probability of attending the program, given baseline covariates.**    
+
+```{r}
+# (a)
+SL_exposure <- SuperLearner(Y = ObsData$A, SL.library = SL.library,
+                            X = dplyr::select(ObsData, -A, -Y),
+                            family = binomial)
+
+# (b)
+g_W <- SL_exposure$SL.predict
+
+summary(g_W)
+summary(1 - g_W)
+
+par(mfrow = c(1, 2))
+hist(g_W)
+hist(1 - g_W)
+```
+
+   
+**6. Use these estimates to create the clever covariate:**
+\[
+\hat{H}(A, W) = \left(\frac{\mathrm{I}(A=1)}{\hat{g}(W)} - \frac{\mathrm{I}(A=0)}{1-\hat{g}(W)}  \right)
+\]
+```{r}
+# (a)
+H_AW <- ObsData$A/g_W - (1 - ObsData$A)/(1 - g_W)
+
+# (b)
+H_1W <- 1/g_W
+H_0W <- 1/(1 - g_W)
+
+# (c)
+theta.iptw <- mean(ObsData$A/g_W * ObsData$Y) - 
+  mean((1 - ObsData$A)/(1 - g_W) * ObsData$Y)
+```
+
+The estimated iptw estimator is `r theta.iptw`.  
+
+**7. Target the initial estimator of the conditional mean outcome $\hat{\mathrm{E}}(Y|A,W)$ with information in the estimated exposure mechanism  $\hat{\mathrm{P}}(A=1|W)$.**
+```{r}
+# (a)
+logit.update <- glm(ObsData$Y ~ -1 + offset(qlogis(m_AW)) + H_AW, family = binomial)
+summary(logit.update)
+
+# (b)
+epsilon <- logit.update$coefficients
+
+# (c)
+m_AW_update <- plogis(qlogis(m_AW) + epsilon * H_AW)
+
+# (d)
+m_1W_update <- plogis(qlogis(m_1W) + epsilon * H_1W)
+m_0W_update <- plogis(qlogis(m_0W) + epsilon * H_0W)
+```
+
+**8. Estimate the statistical parameter by substituting the targeted predictions into the G-Computation formula.**      
+
+```{r}
+t <- m_1W_update - m_0W_update
+```
+We derived the estimator = `r mean(t)` by substituting the targeted predictions into the G-Computation formula.    
+
+**9. Estimate $\theta$ by averaging the difference in the targeted predictions:** 
+\[
+\hat{\theta}_{TMLE} =  \frac{1}{n} \sum_{i=1}^n  \bigg[ \tilde{m}(A,W) \bigg]
+\]    
+
+```{r}
+theta.tmle <- mean(m_1W_update) - mean(m_0W_update)
+```
+
+The TMLE estimator is `r theta.tmle`.  
+
+**10. Compare with IPTW and the simple substitution results from earlier.**
+```{r}
+data.frame(method = c("IPTW", "TMLE", "G-computation"), estimator = c(theta.iptw, theta.tmle, theta.g))
+
+```
+
+It seems the three etimators are very closed to each other.     
+
+# Variance estimation
+
+## Using the influence curve
+
+**11. Calculate the standard error of the TMLE estimate using the following equation:**
+
+```{r}
+tmle_se <- sd(H_AW *(ObsData$Y - m_AW_update) + m_1W_update - m_0W_update) / sqrt(n)
+tmle_se
+```
+
+The standard error of the TMLE estimator is `r tmle_se`.  
+
+
+**12. Briefly explain the background for this equation for the standard errors.**      
+The distribution of TMLE estimator is asymptotically linear:  
+$$\hat{\theta}_{tmle} - \theta \sim \frac{1}{n}\sum_{i = 1}^nD(O_i)$$
+So, we have:  
+$$var(\theta.tmle) = var(D_P(O_i))/n$$     
+$$sd(\theta.tmle) = sd(D_P(O_i))/\sqrt{n}$$ 
+Where,
+$$D_P(O_i) = \frac{A_i}{\hat{g}(W_i)}[Y_i - \tilde{m}(W_i)] + \tilde{m}(W_i) - \hat{\theta}_{tmle}$$  
+
+## Implementing the non-parametric bootstrap  
+
+Alternatively, you could use the non-parametric bootstrap for variance estimation for statistical inference.
+
+**13. Implement the non-parametric bootstrap with 500 iterations by creating a bootstrapped sample of your data (sampling with replacement) and implementing your (hand-coded) TMLE function. Save the estimates in a resulting vector called `estimates`.**
+```{r}
+B <- 50
+estimates <- numeric(B)
+for (i in 1:B){
+  id <- sample(n, replace = T)
+  dat <- ObsData[id, ]
+  X1 <- X0 <- X <- dat[, c("A", "W1", "W2", "W3", "W4")]
+  X1$A <- 1
+  X0$A <- 0
+    
+  SL.outcome <- SuperLearner(Y = dat$Y, X = X, 
+                             SL.library = SL.library, 
+                             family = binomial)
+  
+  m_AW <- predict(SL.outcome, newdata = dat)$pred
+  m_1W <- predict(SL.outcome, newdata = X1)$pred
+  m_0W <- predict(SL.outcome, newdata = X0)$pred
+  
+  SL_exposure <- SuperLearner(Y = dat$A, SL.library = SL.library,
+                            X = dplyr::select(dat, -A, -Y),
+                            family = binomial)
+
+  g_W <- SL_exposure$SL.predict
+  
+  H_AW <- dat$A/g_W - (1 - dat$A)/(1 - g_W)
+  H_1W <- 1/g_W
+  H_0W <- 1/(1 - g_W)
+  
+  logit.update <- glm(dat$Y ~ -1 + offset(qlogis(m_AW)) +
+                        H_AW, family = binomial)
+  epsilon <- logit.update$coefficients
+
+  #m_AW_update <- plogis(qlogis(m_AW) + epsilon * H_AW)
+  m_1W_update <- plogis(qlogis(m_1W) + epsilon * H_1W)
+  m_0W_update <- plogis(qlogis(m_0W) + epsilon * H_0W)
+
+  estimates[i] <- mean(m_1W_update - m_0W_update)
+}
+
+```
+
+
+**14. Look at a histogram of the bootstrapped `estimates` and comment on your findings.**
+```{r}
+hist(estimates)
+```
+
+
+**15. Assuming a normal distribution, compute a 95% confidence interval.**
+```{r}
+ci <- mean(estimates) + qnorm(c(.025, .975)) * sd(estimates)/sqrt(B)
+```
+
+The 95% CI is `r ci` assuming a normal distribution.  
+
+**16. Using the `quantiles` function, find the 2.5% and 97.5% quantiles and use them to compute a 95% confidence interval for the point estimates.**
+```{r}
+ci.boot <- quantile(estimates, c(.025, .975))
+```
+
+The 95% CI is `r ci.boot` using the `quantiles` function.
+
+
+# The basics of the `tmle` package
+
+**17. Load the `tmle` package, read the documentation, then call the `tmle` function using  Super Learner to estimate the conditional mean outcome $\mathrm{E}(Y|A,W)$ and  the exposure mechanism $\mathrm{P}(A|W)$. Use the `summary` function to obtain point estimates and get inference.**  
+
+```{r}
+fit.tmle <- tmle(Y = ObsData$Y, A = ObsData$A, 
+                 W = ObsData[, c("W1", "W2", "W3", "W4")], 
+                 Q.SL.library = SL.library,
+                 g.SL.library = SL.library, 
+                 family = "binomial",
+                 Qform = Y~ A + W1 + W2 + W3 + W4,
+                 gform = A ~ W1 + W2 + W3 + W4)
+summary(fit.tmle)
+```
+**18. How do the estimates and confidence intervals from the TMLE function compare to your hand coded version with 1) the influence curve CIs and 2) the non-parametric bootstrap CIs?**  
+
+```{r}
+# func.tmle <- fit.tmle$estimates$ATT$psi - fit.tmle$estimates$ATC$psi
+
+data.frame(methods = c("tmle.func", "influence.curve", "non-para.boot"), 
+           estimator = c(fit.tmle$estimates$ATE$psi, theta.tmle, mean(estimates)), 
+           CI.l = c(fit.tmle$estimates$ATE$CI[1], theta.tmle + qnorm(.025) * tmle_se, ci.boot[1]),
+           CI.u = c(fit.tmle$estimates$ATE$CI[2], theta.tmle + qnorm(.975) * tmle_se, ci.boot[2]))
+
+
+```
+
+The estimated value and corresponding CI from TLME function is a bit higher than my hand coded version with 1) the influence curve CIs and 2) the non-parametric bootstrap CIs.   
+
+

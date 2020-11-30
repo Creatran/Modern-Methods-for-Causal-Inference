@@ -1,0 +1,145 @@
+---
+title: "HW 5: Superlearning"
+subtitle: "Modern Methods for Causal Inference"
+date: "Due June 29, 2020 at 3pm on Canvas"
+output: 
+  wcmtheme::wcm_html: 
+    toc: true
+    toc_float: true
+    number_toc: true
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Background
+
+You have been asked to build a prediction function for severe acute malnutrition at the community-level in Haiti. The outcome of interest $Y$ is the average mid-upper arm circumference (MUAC) of children aged 6-59 months in each community. In this age range, a MUAC less than 110 mm indicates severe acute malnutrition. (Other indicators of severe acute malnutrition include visible severe wasting, nutritional edema, and a standardized weight for height lower than 3 standard deviations from the median.) 
+
+You have data available on the following community-level predictor variables: 
+
+- $W_1$ - community's access to potable water (1-yes; 0-no)
+
+- $W_2$ - whether the community is located in a stable region (1-yes; 0-no)
+
+- $W_3$ - a measure of the community's socio-economic status (on a scale from 0-5)
+
+- $W_4$ - the proportion of children visiting a health center in the last year for common childhood illnesses (e.g. diarrhea and pneumonia)
+
+- $W_5$ - the number of health facilities or therapeutic feeding centers in a community (min=1, max=4)
+
+Let $W = \{W_1, W_2, W_3, W_4, W_5\}$ be the set of predictors.
+
+# Examine the data set
+
+**1. Import `rhw4_data.csv` and save it as `ObsData`.** Use `names`, `tail`, and `summary` to explore the data (suppress the output of your Rmd chunk after you've explored it).
+
+**2. Assign the number of children in your data set as `n`.**
+
+# Code a discrete Super Learner to select the estimator with the lowest cross-validated risk estimate
+
+The first step of the Super Learner algorithm (and more generally loss-based learning) is to define the target parameter $m(W)=\mathrm{E}[Y|W]$ as the minimizer of the expectation of a loss function. Since the outcome is continuous and the target parameter is the conditional mean of the outcome $Y$ given the covariates $W=(W1, W2, W3, W4, W5)$, we will use the MSE or L2 loss function. The expectation of the loss function is called the risk.
+
+The second step is to define a library of candidate estimators. Suppose that before beginning the analysis we talked to subject matter experts and came up with the following candidate estimators for the conditional expectation of MUAC, given the covariates:
+
+\begin{align*}
+m^a(W) &= \beta_0 + \beta_1 W1 + \beta_2 W2 + \beta_3 \textrm{sin}(W3) + \beta_4 W4^2 \\
+m^b(W) &= \beta_0 + \beta_1 W1 + \beta_2 W2 + \beta_3 W4 + \beta_4 \textrm{cos}(W5)\\
+m^c(W) &= \beta_0 + \beta_1 W2 + \beta_2 W3 + \beta_3 W5 +\beta_4 W2^*W5 +\beta_5 W4^2  + \beta_6 \textrm{cos}(W5) \\
+m^d(W) &= \beta_0 + \beta_1 W1 + \beta_2 W2 + \beta_3 W5 + \beta_4 W1^*W2 + \beta_5 W1^*W5 + \beta_6 W2^*W5 + \beta_7 W1^*W2^*W5
+\end{align*}
+
+Therefore, our library consists of four parametric regressions, denoted with the superscripts $a-d$. We will choose the candidate estimator with the smallest cross-validated risk estimate.  In other words, we are going to select the estimator with the lowest cross-validated mean squared prediction error.
+
+
+**3. Briefly discuss the motivation for using discrete Super Learner (a.k.a. the cross-validation selector).**
+                                                                                              
+**4. Create the following transformed variables and add them to data frame `ObsData`.**
+
+```{r, eval=F}
+sinW3<- sin(ObsData$W3)
+W4sq <- ObsData$W4*ObsData$W4
+cosW5 <- cos(ObsData$W5)
+```
+
+**5. Split the data into $V=20$ folds.**
+
+**6. Create a prediction matrix `Pred` to hold the cross-validated predictions for each community according to each candidate algorithm.**
+
+**7. Create an empty matrix `CV_risk` to hold the cross-validated risk for each algorithm, evaluated at each fold.**
+
+**8. Use  a `for` loop to fit each estimator on the training set (19/20 of the data); predict the expected MUAC for the communities in the validation set (1/20 of the data), and evaluate the cross-validated risk.**
+
+  (a) **Since each fold needs to serve as the training set, have the `for` loop run from `V` is 1 to 20.** First, the observations in $Fold=1$ will serve as the validation set and other 4750 observations as the training set. Then the observations in $Fold=2$ will be the validation set and the other 4750 observations as the training set... Finally, the observations in $Fold=20$ will be the validation set and the other 4750 observations as the training set.
+
+  (b) **Create the validation set as a data frame `valid`, consisting of observations with `Fold` equal to `V`.**
+
+  (c) **Create the training set as a data frame `train`, consisting of observations with `Fold` not equal to `V`.**
+
+  (d) **Use `glm` to fit each algorithm on the training set. Be sure to specify `data=train`.**
+
+  (e) **For each algorithm, predict the average MUAC for each community in the validation set.**
+
+  (f) **Save the cross-validated predictions for each community in the validation set at the appropriate row in the matrix `Pred`.**
+
+  (g) **Estimate the cross-validated risk for each algorithm with the L2 loss function.** Take the average of the squared differences between the observed outcomes $Y$ in the validation set and the predicted outcomes. **Assign the cross-validated risks as a row in the matrix `CV_risk`.**
+
+**9. Select the algorithm with the lowest average cross-validated risk across the folds.**
+
+**10. Fit the chosen algorithm on all the data.**
+
+**11. How can we come up with an even better prediction function than the one selected?**
+
+# Add weights to your Super Learner
+
+Now, instead of choosing one model based upon the risk scores (a discrete Super Learner), weight the candidate models to create an ensemble Super Learner.
+
+**12. Modify the code given in Lab 5 to code the optimal convex combination of weights using the MSE as your loss function.** *Hint:* You will need to use the `nnls` package and normalize the coefficients from fitting an `nnls` model to get weights.
+
+**13. Apply your weights to generate the ensemble based predictions.** *Hint:* You will need to obtain predictions from each model and then weight those predictions according to the weights generated from `nnls`.
+
+**14. What is the risk (MSE) from your hand-coded ensemble Super Learner model? How does it compare to the risk from your hand-coded discrete Super Learner model?**
+
+# Use the `SuperLearner` package to build the best combination of algorithms
+
+**15. Load the `SuperLearner` package and set the seed to 252.**
+
+**16. Use the `source` function to load script file `hw5_wrappers.R`, which includes  the wrapper functions for the *a priori*-specified parametric regressions.**
+
+**17. Specify the algorithms to be included in Super Learner's library.** Create a vector `SL_library` containing the algorithms in the source code.
+
+**18. Optional bonus problem:** Briefly (1-2 sentences) describe the algorithms corresponding to `SL.ridge`, `SL.rpartPrune`, `SL.polymars` and `SL.mean`.
+
+**19. Create data frame `X` with the predictor variables.** Include the original predictor variables and the transformed variables.  **Run the `SuperLearner` function.** Be sure to specify the outcome `Y`, the predictors `X` and the library `SL_library`. Also include `cvControl=list(V=20)` in order to get 20-fold cross-validation.
+
+**20. Explain the output to relevant policy makers and stake-holders for the childhood nutrition project. What do the columns `Risk` and `Coef` mean?**
+
+**21. Are the cross-validated risks from `SuperLearner` close to those obtained by your code?**
+
+# Implement `CV.SuperLearner`
+
+**22. Explain why we need `CV.SuperLearner`.**
+
+**23. Run `CV.SuperLearner`.** Again be sure to specify the outcome, predictors, and SL library. Specify the cross-validation scheme by including `cvControl=list(V=5))` and `innerCvControl=list(list(V=20))`. This might take a couple minutes.
+
+This function is partitioning the data into V$^*$=5 folds, running the whole Super Learner algorithm in each training set (4/5 of the data), evaluating the performance on the corresponding validation set (1/5 of the data), and rotating through the folds.  Each training set will itself be partitioned into V=20 folds in order to run `SuperLearner`.
+
+**24. Explore the output. Only include the output from the `summary` function in your knitted report, but comment on the other output.** *Hint:* if the output object from `CV.SuperLearner` was `CV_SL_out`, run the following code:
+
+```{r, eval=F}
+# summary of the output of CV.SuperLearner
+summary(CV_SL_out)
+#
+# returns the output for each call to Super Learner
+CV_SL_out$AllSL
+#
+# condensed version of the output from CV.SL.out$AllSL with only the coefficients
+# for each Super Learner run
+CV_SL_out$coef
+#
+# returns the algorithm with lowest CV risk (discrete Super Learner) at each step.
+CV_SL_out$whichDiscrete
+```
+

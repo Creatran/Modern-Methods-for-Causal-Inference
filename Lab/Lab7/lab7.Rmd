@@ -1,0 +1,158 @@
+---
+title: "Lab 7: Introduction to the `lmtp` package"
+subtitle: "Modern Methods for Causal Inference"
+date: "Due July 22, 2020 at 11:59PM on Canvas"
+output: 
+  wcmtheme::wcm_html: 
+    toc: true
+    toc_float: true
+    number_toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Setup
+
+## Packages
+
+For this lab, you will need to install a few packages if you do not already have them:
+
+```{r, eval=F}
+install.packages(c("progressr","future","lmtp"))
+remotes::install_github("tlverse/sl3@devel")
+```
+
+```{r, warning=F, message=F}
+library(lmtp)
+library(sl3)
+library(future)
+library(progressr)
+library(tidyverse)
+```
+
+## `sl3` review
+
+The `lmtp` package uses the `sl3` package for superlearner ensemble learning. Recall that `sl3` is a faster, more modern version of the original `SuperLearner` package. Remember that to use `sl3` you will need to first create sl3 learner stacks which contain the individual models that are to be combined. This can be done in a couple of ways, but the easiest is to use the `make_learner_stack()` function.
+
+For example, an ensemble of gradient boosting, a simple intercept model, and a random forest could be created using: 
+
+```{r}
+lrnrs <- make_learner_stack(Lrnr_mean, Lrnr_glm, Lrnr_ranger)
+```
+
+We can adjust hyperparameters by using a list within `make_learner_stack()`. For example, let's adjust the number of trees in that random forest: 
+
+```{r}
+lrnrs <- make_learner_stack(Lrnr_xgboost, 
+                            Lrnr_glmnet, 
+                            list(Lrnr_ranger, num.trees = 1000))
+```
+
+## Shift functions
+
+A *modified* treatment policy is a function of the natural treatment value (and possibly pre-treatment covariates). In `lmtp` we can communicate this policy, or change, by writing "shift functions." A shift function is a user defined R function with 2 parameters. The first for the name of the data set and the second for the name of the current treatment variable.
+
+The general form is:
+
+```{r}
+shift.function <- function(data, trt) {
+  # some code that modifies the treatment
+}
+```
+
+The shift function should return a vector the same length and type as the observed treatment but modified according the intervention of interest. For example, a shift function for an intervention that decreases the natural value of the exposure by 5 units would just be: 
+
+```{r}
+down.5 <- function(data, trt) {
+  data[[trt]] - 5
+}
+```
+
+This is a general purpose framework that will allow us to work with multiple variable types and implement complex interventions.
+
+## Progress bars
+
+`lmtp` is set up to use progress bars through the `progressr` package. All you have to do is wrap estimators in `with_progress()`.
+
+```{r, eval=F}
+with_progress({
+  fit <- ...
+})
+```
+
+# `lmtp` for a binary point treatment
+
+We will first repeat the TMLE exercise from Lab 6 (a binary treatment) where the true effect of the treatment (childhood reading intervention) was a 6.24% increase in reading comprehension improvement.
+
+Recall that in Lab 6 you estimated the ATE using `tmle::tmle()` where you specified the treatment, outcome, confounders, and learners. Because `lmtp` is set up to handle many more time points and complicated interventions, there is slightly more set up to estimate the effect of a simple binary point treatment.
+
+When using the `lmtp` package, you will always need to determine the population outcome under the individual intervention(s) of interest using one of the fit functions (for estimating with TMLE, use `lmtp_tmle`). In a static, binary treatment such as in Lab 6, that means you need to estimate the population outcome in a hypothetical world where all children received the reading intervention, and then estimate the population outcome in a hypothetical world where no children received the reading intervention. After that, you can set up contrasts to determine whether the difference between the interventions is significant using the function `lmtp_contrast`.
+
+**0. Set the seed to 7 and load in the data from Lab 6 (`RLab6_TMLE.csv`).** Please remember to remove the column that contains the row numbers. 
+
+**1. Using the function `lmtp_tmle`, estimate the population outcome for a hypothetical world in which all children received the reading program intervention, adjusting for baseline confounders $W_1$, $W_2$, $W_3$, and $W_4$.** You will need to specify the `trt`, `outcome`, and `baseline` arguments as character strings of the relevant variable names. Use the `lrnrs` from the instructions (`xgboost`, `glmnet`, and `ranger`) in the arguments `learners_outcome` and `learners_trt`. Call the resulting estimate `theta.all.tmle` to indicate this is a TMLE estimate of $\theta$ under a world in which all observations received the intervention.
+
+*Hint:* You can use the built-in shift function `static_binary_on` to indicate all observations receive the binary treatment.
+
+**2. Using the function `lmtp_tmle`, estimate the population outcome for a hypothetical world in which none of the children received the reading program intervention, adjusting for baseline confounders $W_1$, $W_2$, $W_3$, and $W_4$.** You will need to specify the same `trt`, `outcome`, `baseline`, and `learners_outcome/treatment` arguments as the previous question. You will also need to specify the `outcome_type` as `"continuous"`. Call the resulting estimate `theta.none.tmle` to indicate this is a TMLE estimate of $\theta$ under a world in which none of the observations received the intervention.
+
+*Hint:* You can use the built-in shift function `static_binary_off` to indicate no observations receive the binary treatment.
+
+**3. Use the `lmtp_contrast` function to obtain standard errors, confidence intervals, and p-values for an estimate of $\theta = \mathrm{E}[Y_1] - \mathrm{E}[Y_0]$.**
+
+*Hint:* Set the reference to $Y_0$, or `theta.none.tmle`, and leave the contrast type as `"additive"` so that you are calculating the Average Treatment Effect (ATE). 
+
+**4. Interpret the output of `lmtp_contrast`. What are the `"theta"`, `"shift"`, and `"ref"` values?**
+
+**5. Repeat steps 1 and 2 using the `lmtp_sub` and `lmtp_ipw` functions to implement G-compuation (substitution) and inverse probability weighting estimating. This time, add progress bars by adding `with_progress({ })` around your code.** Call the resulting estimates `theta.all.sub`, `theta.none.sub`, `theta.all.ipw`, and `theta.none.ipw`.
+
+**6. Try to use the `lmtp_contrast` function on the G-compution and IPW estimates. What error do you get and why?**
+
+**7.** Pretend for a moment that your researchers you've been working with want to run a future study on child reading scores where there is both an intensive (every day for a week) reading intervention program, and a less intenvsive (one day) summer reading intervention program. Some students still do not enroll the reading program, so you will have an intervention with three levels instead of two. **Will you still be able to use the `lmtp` package to estimate the effects of each of the reading group interventions compared to no reading intervention? If yes, describe which functions you would use to compute this. If no, explain why it is impossible.**
+
+# `lmtp` for a continuous point treatment
+
+Suppose now that we are interested in estimating the causal effect of sodium on systolic blood pressure in adults aged 50-60 years. Researchers collected inpatient data on 2000 acute care patients' sodium consumption (as measured by the breakfast provided to them by the hospital) $A$, and their subsequent morning blood pressure measurement $Y$.
+
+Suppose we have data on the following baseline confounding variables:
+
+- $W_1$: sex (1 for male; 0 for female) 
+
+- $W_2$: average blood pressure
+
+- $W_3$: perceived pain level (scale from 0-10, measured by the patients' nurses right before their meal was given)
+
+Let $W=(W_1,W_2,W_3)$ be the vector of baseline covariates. 
+
+**8.** Assume you are interested in estimating the effect of an intervention that would decrease sodium intake by 500mg on everyone. **Do you see any issues with identifiability in this study design and scientific question?**
+
+**9. Run the below data generating code, then estimate the population mean blood pressure if all patients were to receive 500 mg less sodium in their breakfast meal.**
+
+*Hint:* use the `lmtp_tmle` function and specify the `data`, `trt`, `outcome`, and `baseline` arguments. You can use any library of `learners` that you'd like for both `learners_outcome` and `learners_trt`. You will need to write a simple shift function (see the setup on shift functions) that makes all observations' treatment $A$ 500 units lower.
+
+```{r}
+n <- 2000
+W1 <- rbinom(n, 1, .5)
+W2 <- rnorm(n, mean=150 + W1*10, sd=10)
+W3 <- 2 / (rbinom(n, 1, .5) + 1) * W1 + 4 * rbinom(n, 1, plogis(W2/200)) +  2 / (rbinom(n, 1, .5) + 1) * rbinom(n, 1, plogis(W2/100)) * (W1 + 1)
+A <- rbinom(n, 1, plogis(W1 + W3/5)) * rnorm(n, mean=2000 - W2 + 200*W1, sd=200)
+Y <- rnorm(n, mean=W2 + W1*A/1000 + W3, sd=10)
+ObsData <- tibble(W1,W2,W3,A,Y)
+```
+
+# `lmtp` for a continuous, modified point treatment
+
+A physician you work with informs you that this is not a very helpful estimate, because some patients are on orders to receive *no* food or drink due to upcoming procedures or certain ailments. She tells you that only patients who can receive a breakfast meal that day will have a sodium intake.
+
+**10. Verify that this is true in your data. What is wrong with the current estimate for question 9, since this is true?**
+
+**11. Refit your estimate from question 9 to instead be the population mean blood pressure when all patients’ sodium intake A is 500 mg lower, only if a patient has a sodium intake greater than 500 mg.**
+
+**12. Estimate the population mean blood pressure when all patients' sodium intake was what was actually, or naturally, observed.** Note that in this situation, because you have no missing data, it is just the population mean. If you had missing, or censored, data, you would need use the `lmtp_tmle` function with a shift function set to `NULL`.
+
+**13. Use the `lmtp_contrast` function on your estimates from 11 and 12 to determine the ATE of the modified treatment policy of a 500 mg lower sodium intake for all patients who are able to eat. Interpret the results. Is there clinical meaning to the estimated causal change in blood pressure?**
+
+
+

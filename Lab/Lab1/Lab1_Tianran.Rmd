@@ -1,0 +1,52 @@
+---
+title: "Lab1"
+author: "Tianran Zhang"
+date: "5/4/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+1. Describe Simpson's Paradox
+
+2. An example of Simpson's Paradox
+
+3. Estimate the following marginal and conditional probabilities from the data:
+
+   a. P(infection within 7 days) = (58 + 101 + 76 + 68)/(405 + 150 + 308 + 81 + 58 + 101) = 
+
+   
+```{r}
+(58 + 101 + 76 + 68)/(405 + 150 + 308 + 81 + 58 + 101 + 76 + 68)
+(58 + 101 + 76 + 68 + 150)/(405 + 150 + 308 + 81 + 58 + 101 + 76 + 68)
+101/(150 + 101)
+101/(58 + 101 + 76 + 68)
+```
+
+```{r}
+mtcars
+
+# a
+mean(mtcars$hp)
+
+# b
+n <- nrow(mtcars)
+mtcars %>%
+  group_by(cyl) %>%
+  summarise(exp_hp = mean(hp))
+
+# c
+lm(hp ~ 1, data = mtcars)
+lm(hp ~ factor(cyl) - 1, data = mtcars)
+
+# d
+lm(hp ~ factor(cyl) + mpg - 1, data = mtcars)
+lm(hp ~ factor(cyl) + mpg, data = mtcars)
+```
+
+
+
+

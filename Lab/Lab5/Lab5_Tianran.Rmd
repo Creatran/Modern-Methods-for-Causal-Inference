@@ -1,0 +1,283 @@
+---
+title: "Lab5_Tianran"
+author: "Tianran Zhang"
+date: "6/23/2020"
+output: 
+  html_document:
+    code_folding: hide
+    theme: readable
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: no
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(readr)
+library(tidyverse)
+library(kableExtra)
+
+library(SuperLearner)
+library(sl3)
+library(tidyverse)
+```
+
+
+
+# Import the data set 
+
+**0. Read in the csv `lab5_superlearner_data.csv` and save it as `ObsData`.**  
+```{r}
+ObsData <- read.csv("lab5_superlearner_data.csv")
+names(ObsData)
+head(ObsData)
+summary(ObsData)
+
+n <- nrow(ObsData)
+set.seed(1)
+```
+
+# The curse of dimensionality
+
+**1. Use the `table` function to count the number of patients within strata of sex $W_1$ and dyspnea category $W_3$.**
+```{r}
+table(W1 = ObsData$W1, W3 = ObsData$W3) 
+```
+**2. Are you wary of predicting whether an individual has ILD via the sample proportion in each strata (i.e. the NPMLE)?**    
+
+  No, since in some strata the number of patients is quite small. For example, Only one patient has W1 = 0 and W3 = 5, while no patient in strata W1 = 1, W3 = 5. Thus the sample proportion in these strataes can not be used to estimate the conditional probability of a positive ILD diagnosis for females.    
+
+
+# Code discrete Super Learner to select the estimator with the smallest cross-validated risk estimate.
+
+
+**3. Which algorithm do you think will do best at predicting whether a patient be given a clinical diagnosis of ILD by a radiologist?**    
+  I think the second model will do best with the lowest cv mean squared prediction error. Because the second model is the only model that considers all 4 predictors (W1, W2, W3, W4) and the protential interaction between W3 and W4.   
+
+**4. Create the following transformed variables and add them to data frame `ObsData`.**
+
+```{r}
+W2sq <- ObsData$W2*ObsData$W2
+sinW2sq <- sin(W2sq)
+logW2 <- log(ObsData$W2)
+W4sq <- ObsData$W4*ObsData$W4
+sinW4sq <- sin(W4sq)
+logW4 <- log(ObsData$W4)
+
+ObsData <- cbind(ObsData, W2sq, sinW2sq, logW2, W4sq, 
+                 sinW4sq, logW4)
+```
+
+**5. Split the data into $V=10$ folds.**    
+```{r}
+fold <- c(rep(1,100), rep(2,100), rep(3,100), rep(4,100), rep(5,100),
+          rep(6,100), rep(7,100), rep(8,100), rep(9,100), rep(10,100))
+```
+
+
+**6. Create a data frame `Pred` with 1000 rows (one for each patient) and four columns to hold the cross-validated predictions for each patient according to each candidate algorithm.**   
+
+```{r}
+Pred <- data.frame(matrix(nrow = 1000, ncol = 4))
+colnames(Pred) <- c("a", "b", "c", "d")
+```
+
+**7. Create a data frame `CV_risk` with 10 rows and four columns to hold the cross-validated riks for each algorithm, evaluated at each fold.**  
+
+```{r}
+CV_risk <- data.frame(matrix(nrow = 10, ncol = 4))
+colnames(CV_risk) <- c("a", "b", "c", "d")
+```
+
+**8. To implement discrete Super Learner, use a `for` loop to fit each estimator on the training set (9/10 of the data);  predict the probability of ILD for the corresponding validation set (1/10 of the data), and evaluate the cross-validated risk.**   
+
+```{r}
+for (V in 1:10) {
+  valid <- ObsData[fold == V, ]
+  train <- ObsData[fold != V, ]
+  
+  fita <- glm(Y ~ W1 + W3 + W1 * W3 + W4sq, data = train, 
+              family = "binomial")
+  fitb <- glm(Y ~ W1 + logW2 + W3 + W4 + W3 * W4, data = train, 
+              family = "binomial")
+  fitc <- glm(Y ~ W1 + W2 + W4 + W1 * W2 + W1 * W4 + W2 * W4 + 
+                W1 * W2 * W4, data = train, family = "binomial")
+  fitd <- glm(Y ~ W1 + sinW2sq + W1 * sinW2sq + logW4, 
+              data = train, family = "binomial")
+  
+  preda <- predict(fita, newdata = valid, type = "response")
+  predb <- predict(fitb, newdata = valid, type = "response")
+  predc <- predict(fitc, newdata = valid, type = "response")
+  predd <- predict(fitd, newdata = valid, type = "response")
+  
+  Pred[fold == V, ] <-  data.frame(preda, predb, predc, predd)
+  
+  CV_risk[V, 1] <- mean((preda - valid$Y)^2)
+  CV_risk[V, 2] <- mean((predb - valid$Y)^2)
+  CV_risk[V, 3] <- mean((predc - valid$Y)^2)
+  CV_risk[V, 4] <- mean((predd - valid$Y)^2)
+}
+```
+
+  
+**9. Select the algorithim with the lowest average cross-validated risk across the folds.** 
+```{r}
+colMeans(CV_risk)
+```
+It seems the last algorithm has the lowest average cross-validated risk across the folds.  
+
+**10. Fit the "chosen" algorithm on all the data.** These are your discrete superlearner predictions.
+```{r}
+fit1 <- glm(Y ~ W1 + sinW2sq + W1 * sinW2sq + logW4, 
+              data = ObsData, family = "binomial")
+```
+
+# Use the `SuperLearner` package to build the best combination of algorithms.
+
+
+**11. Install `SuperLearner` from CRAN and `sl3` from the `tlverse` github. Load both packages and `tidyverse` if you haven't already.**
+
+```{r}
+?SuperLearner
+listWrappers("SL.step")
+```
+
+
+**12. Use the `source` function to load script file `lab5_superlearner_wrappers.R`, which includes code for the wrapper functions for the *a priori*-specified parametric estimators.**
+
+```{r}
+source("lab5_superlearner_wrappers.R")
+```
+
+**13. Specify the algorithms to be included in SuperLearner's library.** 
+
+```{r}
+SL_library<- c('SL.glm.EstA', 'SL.glm.EstB', 'SL.glm.EstC', 'SL.glm.EstD')
+```
+
+Note: We are choosing these simple algorithms to reflect the models we've explicitly specified already. If you were actually try to make a best prediction model you would probably want several non-parametric estimators (which we will see in the `sl3` code).
+
+**14. Create data frame `X` with the predictor variables.**  
+```{r}
+X <- ObsData[, -5]
+```
+
+**15. Run the `SuperLearner`function. Be sure to specify the outcome `Y`, the predictors `X`, the library `SL.library` and the `family`. Also include `cvControl=list(V=10)` in order to get 10-fold cross-validation.**
+```{r}
+SL_out <- SuperLearner(Y = ObsData$Y, X = X, 
+                       SL.library = SL_library, 
+                       family = "binomial", 
+                       cvControl = list(V = 10))
+SL_out
+```
+
+
+**16. Which algorithm had the lowest cross-validated risk?  Which algorithm was given the largest weight when building the convex combination of algorithms? Are the cross-validated risks from `SuperLearner` close to those obtained by your code?**
+
+The fourth algorithm had the lowest cross-validated risk of 0.156, and this model was given the largest weight when building the convex combination of algorithms. (?)   
+The cross-validated risks fronm `SuperLearner` is very close to those obtainded by my code. They are almost the same.  
+
+# Coding the weights for your hand-coded Super Learner
+
+**17. Try the following code to create the weights from your hand-coded Super Learner when the goal is to minimize the expected L2 loss function.**
+
+```{r}
+library(nnls)
+
+# Create a new data frame with the observed outcome (Y) and CV-predictions from the 4 algorithms
+X<- cbind(ObsData$Y, Pred)
+head(X)
+
+## estimate weights using non-linear least squares 
+weights <- nnls(as.matrix(X[,2:5]), X[,1])$x
+
+# then normalize to sum to 1 by dividing by the sum of the weights
+alpha <- as.matrix(weights/sum(weights))
+round(alpha,3)
+# compare to the package's coefficients (you'll need to save your SuperLearner fit as SL_out for this to work)
+SL_out
+
+## fit all algorithms to original data & generate predictions
+PredA<- predict(glm(Y~ W1*W3 + W4sq, family='binomial',
+                   data=ObsData), type='response')
+PredB<- predict(glm(Y~ W1+ logW2 + W3*W4, family='binomial', 
+                   data=ObsData), type='response')
+PredC<- predict(glm(Y~ W1*W2*W4, family='binomial', 
+                   data=ObsData), type='response')
+PredD<- predict(glm(Y~ W1*sinW2sq+ logW4, family='binomial', 
+                   data=ObsData), type='response')
+
+Pred <- cbind(PredA, PredB, PredC, PredD)
+
+# Take a weighted combination of predictions using nnls coeficients as weights
+Y_SL <- Pred%*%alpha
+
+# compare the (non-cross-validated) weighted predictions between
+# our our hand-coded ensemble SuperLearner and the package
+mean((ObsData$Y - Y_SL)^2)
+mean((ObsData$Y - SL_out$SL.predict)^2)
+```
+
+The (non-cross-validated) weighted predictions by hand-coded ensemble SuperLearner is equal to the one derived from the package.   
+# Evaluate the performance of Super Learner
+
+**18. Evaluate the performance of the Super Learner algorithm by running `CV.SuperLearner`.** 
+
+```{r}
+CV.SL_out <- CV.SuperLearner(Y = ObsData$Y, X = ObsData[, -5], 
+                       SL.library = SL_library, 
+                       family = "binomial", 
+                       cvControl = list(V = 10))
+summary(CV.SL_out)
+```
+
+It seems Super Learner algorithm has the lowest average cv mean squared error. Besides, the algorithm "D" has an average cv MSE of 0.156, which is very close to the Super Learner average cv MSE.   
+
+# Appendix - Using `sl3`
+
+We will look at the in-progress package `sl3` from `tlverse`. `sl3` is not on CRAN yet but offers a potentially improved user-interface from `SuperLearner`. Let's look at an example of how we might weight three prediction models using superlearning: random forests, generalized linear regression, and penalized regression (LASSO, using `glmnet`).
+
+First we will define a machine learning "task" by creating an `sl3_Task` object. This will help us keep track of our predictors and outcome (and other metadata if we were to have weights or ids to include in our model).
+
+```{r}
+outcome <- "Y"
+covars <- ObsData %>% select(-Y) %>% names()
+
+ild_task <-
+  make_sl3_Task(
+  data = ObsData,
+  covariates = covars,
+  outcome = outcome,
+  folds= origami::make_folds(ObsData, V=10))
+```
+
+Then we can look at the potential learners, or models, we can fit:
+
+```{r}
+sl3_list_learners("binomial")
+```
+
+We can choose any number of learners from this list with the `make_learner()` function, and put them in a "stack" of candidate models.
+
+```{r}
+lrnr_rf <- make_learner(Lrnr_randomForest)
+lrnr_glm <- make_learner(Lrnr_glm)
+lrnr_glmnet <- make_learner(Lrnr_glmnet)
+
+stack <- make_learner(Stack, lrnr_rf, lrnr_glm, lrnr_glmnet)
+```
+
+Finally, we are ready to fit our superlearning model.
+
+```{r}
+sl <- Lrnr_sl$new(learners=stack)
+
+sl_fit <- sl$train(ild_task)
+sl_fit
+```
+
+
+
+

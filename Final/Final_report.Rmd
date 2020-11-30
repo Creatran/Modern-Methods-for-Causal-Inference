@@ -1,0 +1,560 @@
+---
+title: "Final report"
+author: "Wenyu Zhu, Tianran Zhang, Yinuo Liu"
+date: "2020/7/16"
+output: 
+  html_document:
+    theme: readable
+    toc_float: true
+    toc: yes
+    toc_depth: 5
+  editor_options: 
+  chunk_output_type: inline
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F,warning=F,message = F)
+
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(ggmosaic)
+library(table1)
+library(summarytools)
+library(tidyverse)
+library(SuperLearner)
+library(earth)
+library(tmle)
+library(tibble)
+library(knitr)
+```
+
+```{r}
+# Load Data
+load("Depression.RData")
+```
+
+# Study Background 
+During 2013 - 2016, 8.1% of American adults age 20 and over had depression in a given 2-week period. Women (10.4%) were almost twice as likely as were men (5.5%) to had depression. Besides, depression is less prevalence in a family with higher income compared to those with lower income. Depressions are also related with health status, drug and alcohol using, disabilities, comorbities, and sleep conditions. Observational studies have shown that adults who report low physical activity levels are at elevated risk of depression compared with those who report moderate or high levels of activity. We are interested in the causal effect of physical activities and depression in American adults. The outcome of interest is depression level, and the population of interest is American adults age 20-65. We have 14 pre-intervention covariates. Data were collected form 2015 - 2016 National Health and Nutrition Evaluation Survey (NHANES)[1].           
+
+# Roadmap
+## Step 0: Scientific Question
+**What is the causal effect of physical activities on depression among American adults age 20-65?**
+
+## Step 1: Causal Model
+We built a structural causal models to represent our background knowledge of the system we studied. 
+
+**Specify the causal model**   
+To build the structural causal model, we need to specify the endogenous variable X, the background variable U and the structural equations F. The endogenous variables are affected by other variables in the model. The background variables are all the unmeasured factors not included in X and determine the values that the X variables take. The structural equations deterministically assign a value to each of the endogenous variables X.        
+
+**Structural Causal Model (SCM)**    
+
+  - Endogenous nodes: $X =(W, A, Y)$, where $W$={sociodemographic information, comorbidities, disabilities, drug use, alcohol use, sleep disorder, self-reported health condition}, A is physical activity status, and Y is depression status.
+  
+  - Background (exogenous) variables: $U=(U_{W}, U_{A}, U_{Y})\sim \mathrm{P}^*$, where $U_W$={occupation, citizenship}, $U_A$={diet,physique} $U_Y$={personality,stress}. There are no independence assumptions on $P^*$.  
+  
+  - Structural equations $F$:  
+  
+\begin{align*}
+W& \leftarrow f_{W}(U_W)\\
+A& \leftarrow f_A(W, U_A)\\
+Y& \leftarrow f_{Y}(W, A, U_Y)
+\end{align*}
+
+**DAG**    
+The accompanying directed acyclic graph (DAG) graphically shows the structural equations.   
+```{r}
+library(ggdag)
+plot <- dagify(Y ~ W  + A + UY,
+                     A ~ W +UA,
+                     W ~ UW,
+                     exposure = "A",
+                     outcome = "Y")
+plot <- tidy_dagitty(plot)
+ggdag(plot)+ theme_dag_blank()
+```
+
+
+## Step 2: Counterfactuals & Causal Parameter 
+**Derive counterfacuals**    
+
+ - We are interested in the causal effect of physical activities on depression among American adults age 20-65.        
+ - The variable we want to intervene on is physical activities.  
+ - The intervention we are interested in is: 
+      - all subjects have 3 or more days doing vigorous-intensity sports, fitness or recreational activities in a week, set A<-1
+      - all subjects have less than 3 days doing vigorous-intensity sports, fitness or recreational activities in a week, set A<-0 
+ - Counterfactuals derived from the SCM 
+      - We can make modification to the set of equations to represent our intervention of interest
+          - $Y_1$
+              - Intervene on the system to set A —> 1
+              - Replace $f_A$ with constant function 1
+              - $Y_1\leftarrow f_Y(W,1,U_Y)$   
+          - $Y_0$
+              - Intervene on the system to set A —> 0
+              - Replace $f_A$ with constant function 0
+              - $Y_0\leftarrow f_Y(W,0,U_Y)$
+      - The original SCM is also a model on the distribution of these counterfactuals. The counterfactuals are uniquely determined by U and F. Therefore we also use P* to denote the distribution of the counterfactual random variables $(Y_1,Y_0)$.  
+          - $(Y_1,Y_0)$~P*  
+  
+**Translate the question into a formal target causal parameter**      
+The target causal parameter is $\theta^*=Ε^*(Y_1-Y_0)=E^*[f_Y(W,1,U_Y)]-E^*[f_Y(W,0,U_Y)]$.  
+$\theta^*$ is the expected difference proportion of counterfactual outcome depression between if all subjects have 3 or more days doing vigorous-intensity sports, fitness or recreational activities in a week and if all subjects have less than 3 days doing vigorous-intensity sports, fitness or recreational activities in a week. 
+The question "What is the causal effect of physical activities on depression among American adults age 20-65?” can be answered by estimating $\theta^*=Ε^*(Y_1-Y_0)$.    
+$\theta^*$ is referred to the average treatment effect, or ATE. If $\theta^*$>0 the answer is yes, otherwise no.       
+The expectation is over the distribution of counterfactuals P*.       
+ 
+## Step 3: Observed data & link to causal mode
+The observed data are multidimensional random variables with distribution P. We assume that the observed data were drawn from a system compatible with our structural causal model. Thus our observed data are n iid copies of $(W_1,A_1,Y_1)$,…,$(W_n,A_n,Y_n)$ drawn from probability distribution P.      
+
+ - Observed data O=(W,A,Y)~P:
+    - Covariates W={sociodemographic information, comorbidities, disabilities, drug use, alcohol use, sleep disorder, self-reported health condition}
+    - Exposure: A=  physical activity status
+    - Outcome: Y= depression status 
+
+There are 343 observations and 18 variables in our observed data set after dropping the missing values. The table of the data frame for our observed data set is in *Appendix 1*.    
+According to the data frame, we can see that some factor variables have levels with 0 observation, we need to remove those levels (e.g. drug use). Some variables are continuous variables or have too many levels, for simplification in this study, we need to dichotomize them(e.g. household income). The summary table of the redefinition process is in *Appendix 2*.  
+The descriptions of each variables after redefinition process are in *Appendix 3*, we would use these variables in the following analysis. The following table 1 shows the summary statistics of our data set.  
+
+&nbsp;&nbsp;     
+**Table 1**    
+```{r}
+rndr <- function(x, name, ...){
+  if (length(x) == 0){
+    y <- dat[[name]]
+    s <- rep("", length(render.default(x = y, name = name)))
+    if (is.numeric(y)){
+      p <- kruskal.test(y ~ dat$p)$p.value
+    } else{
+      p <- fisher.test(table(y, droplevels(dat$p)), simulate.p.value = T)$p.value
+    }
+    s[2] <- sub("<", "&lt;", format.pval(p, digits = 3, eps = 0.001))
+    s
+  } else{
+    render.default(x = x, name = name, ...)
+  }
+}
+
+rndr.strat <- function(label, n, ...){
+  ifelse(n == 0, label, render.strat.default(label, n, ...))
+}
+
+dat3<-dat
+colnames(dat3)<-c("Gender","Age","Education","Race","Household Income","Drug use","Difficulty Hearing","Difficulty Seeing","Difficulty Concentrating","Difficulty Walking","Sleep Disorder","Alcohol Use","Health Condition","Hypertension","Diabetes","Cardiovascular Disease","Physical Activities","Depression")
+table1(~ Gender+Age+Education+Race+`Household Income`+`Drug use`+`Difficulty Hearing`+`Difficulty Seeing`+`Difficulty Concentrating`+`Difficulty Walking`+`Sleep Disorder`+`Alcohol Use`+`Health Condition`+Hypertension+Diabetes+`Cardiovascular Disease`+`Physical Activities`|Depression, data = dat3,
+       droplevels = F, render = rndr, render.strat = rndr.strat, overall = "Total")
+
+```
+
+&nbsp;&nbsp;     
+**The link between the SCM and the observed data**     
+We assume that the observed data were drawn from a system compatible with our structural causal model. This gives us n iid observations of (W1,A1,Y1),…,(Wn,An,Yn) sampled from probability distribution P. The distribution of the background variables $P^*$ and the structural equations F could identify the distribution of the observed data O. Identifiability is the process of linking the distribution of the unobserved counterfactuals (Y1, Y0) to the distribution of observed data (W, A, Y).
+
+## Step 4: Identify
+**Back-door criterion**     
+The causal parameter $\theta^*$ is identified if there is equivalence between the causal parameter $\theta^*$ and some statistical parameter $\theta$, for each P* compatible with SCM. We assess the identifiability of $\theta^*$ using the back-door criterion. We need W block any association between A and Y that from common causes; W does not create any new non-causal associations between A and Y; W does not block any of the effect of A on Y. We used the graphic method to check if variables satisfy the back-door criterion. Since there is no independence assumption on $P^*$, there are arrows between each of the exogenous variables, which also contains some backdoor paths. There isn’t a subset of observed covariates W that satisfies the back-door criterion. The $\theta^*$ is not identified.   
+
+**Randomization assumption**    
+To identify the $\theta^*$, We need the randomization assumption: $Y_a \perp \!\!\! \perp A|W$. Under this assumption, $E^*(Y_a) = E[E(Y | A = a,W)]$. Conditional on covariates W, we want to be sure that any observed association between A and Y is due to the effect of the exposure A on the outcome Y. The randomization assumption holds under these set of independence assumptions: $U_A \perp \!\!\! \perp U_Y,\  and \  (U_{W} \perp \!\!\! \perp U_Y , or\ \  U_A \perp \!\!\! \perp U_{W})$. 
+
+ - According to the DAG, 
+     - No node of W is a descendant of A: there is no spurious sources association between A and Y.  
+     - W blocks all “back-door" paths from A to Y: there is no spurious sources of dependence and W didn't block the path of interest.      
+
+Then W satisfy the back-door criterion. $\theta^*$ is identified.   
+
+**Plausibility of assumption**        
+Base on our background knowledge of these study, we include 14 covariates into our dataset which can be adjusted in our causal model. These covariates cover the baseline social, economic, medical and behavioral status of the subjects associated with depression. So our assumption of randomization is probably plausible.        
+For the unmeasured variables, $U_A \perp \!\!\! \perp U_Y, \ \  U_{W} \perp \!\!\! \perp U_Y$ , and $U_A \perp \!\!\! \perp U_Y,\ \  U_A \perp \!\!\! \perp U_{W}$ are more plausible than $U_A \perp \!\!\! \perp U_Y,\ U_{W} \perp \!\!\! \perp U_Y , \  U_A \perp \!\!\! \perp U_{W}$. Because we only have two additional independence assumptions for the unmeasured variables in the first 2 sets, but for the last sets, we make three additional independence assumptions.
+
+## Step 5: Commit to a Statistical Model and Estimand   
+**Statistical model**    
+The statistical model is set of possible distributions of the observed data. The causal model implies the statistical model. Our causal model represent our knowledge about how the observed data was generated, but this knowledge does not imply any restrictions on the set of possible observed data distributions. The structural equations do not restrict the functional form of the causal relationships. So there is no restrictions on the distributions of the observed data, our statistical model is non-parametric.    
+
+**Estimand**     
+
+ - $\theta^*$: causal parameter/estimand      
+The target causal parameter is $\theta^*=Ε^*(Y_1-Y_0)=E^*[f_Y(W,1,U_Y)]-E^*[f_Y(W,0,U_Y)]$. It is the property of the counterfactual distribution.   
+ - $\theta$: statistical parameter/estimand        
+The statistical estimand is calculated from true observed population(property of true observed data distribution), could know if we have infinite data.
+$$\begin{align}
+\theta &=E[E(Y|A=1,W)-E(Y|A=0,W)] \\
+  &=\sum_W[E(Y|A=1,W=w)-E(Y=0,W=w)]P(W=w) 
+\end{align}$$  
+ - $\hat{\theta}$: estimator of statistical estimand
+    - The estimator is calculated from our observed data set. It is the estimator of statistical estimand. It could be estimator of causal parameter if W satisfies the back-door criterion and positivity assumption(identification) and if the model is indeed as specified(statistical model representing real knowledge).    
+   - Because of curse of dimensionality, we can’t use non-parametric estimator when covariates W are high-dimensional. We could use a priori-specified parametric regression. But if we rely on mis-specified parametric regressions, we would got poor estimators. The estimator that does not respect the statistical model would have large bias, and misleading inference. However, looking at the data in an ad hoc way is dangerous, the estimator must be an a priori-specified algorithm, or it would introduce bias and misleading inference.
+Thus, we consider discrete super learner to choose the algorithm with the lowest cross-validated risk estimate. So we can do better job estimating E(Y|A,W) and P(A,W). In our study, we calculate 4 estimators using SuperLearner. Substitution and IPW with SuperLearner: wrong bias-variance trade-off, no formula for CIs and p-values. Augmented IPW and TMLE: use SuperLearner to solve model misspecification bias, while still allowing computation of CIs and p-values.
+      - Simple substitution estimator     
+      $$\hat{\theta}_{G-formula} =\hat{\theta}=\sum_w[E_n(Y|A=1,W=w)-E_n(Y|A=0,W=w)]P_n(W=w)$$
+      - IPTW estimator     
+      $$\hat{\theta}_{IPTW} =\frac{1}{n}\sum_{i=1}^n\frac{I(A_i=a)}{\hat{P}(A_i=a|W_i)}Y_i$$
+      - AIPW       
+      $$\hat{\theta}_{AIPW} = \frac{1}{n}\sum^n_{i=1}\{\frac{A_i}{\hat{g}(W_i)}[Y_i-\hat{m}(W_i)]+\hat{m}(W_i)\}$$
+      - TMLE        
+      $$\tilde{m}(A,W) =  expit \bigg[ logit\big[ \hat{m}(A,W) \big] + \hat{\epsilon} \hat{H}(A,W) \bigg]$$       
+      $$\hat{\theta}_{TMLE} =  \frac{1}{n} \sum_{i=1}^n  \bigg[ \tilde{m}(A,W) \bigg]$$       
+
+## Step 6: Estimates {.tabset .tabset-fade .tabset-pills}
+
+**Unajusted Result**
+
+First, we use the raw data to calculate the causal effect of exercise on depression level without covariates. Then using T-Test to calculate its 95% confidence interval.
+
+```{r,message=FALSE,warning=FALSE}
+set.seed(135)
+# transform the binary variables into numeric
+dat1<-dat
+dat1$depression<-as.numeric(dat1$depression)-1
+dat1$exercise<-2-as.numeric(dat1$exercise)
+```
+
+```{r}
+# First calculate the unajusted result
+theta <- mean(dat1$depression[dat1$exercise==1])-
+  mean(dat1$depression[dat1$exercise==0])
+tt<-t.test(dat1$depression[dat1$exercise==1],dat1$depression[dat1$exercise==0])
+```
+
+**SuperLearner**
+
+We use SuperLearner to calculate G-computation (simple substitution estimator), inverse probability of treatment weighted estimator(IPTW), AIPW, and TMLE.
+
+For the library of the SuperLearner, we choose `SL.glm`, `SL.glmnet`, `SL.earth`, `SL.randomForest` and `SL.mean` as the algorithms. `SL.glm` is the basic function to built a generalized linear model, so we pick it in the library. Considering lots of covariates and little background knowledge about their relationship, we added `SL.glmnet`, `SL.earth`, `SL.randomForest` and `SL.mean` to the library to reduce some non-significant or less associate covariates to improve the performance of the prediction.
+
+We only provided 95% confidence interval for AIPW and TMLE, as the standard error for other methods can not be calculated in this way.
+
+```{r,message=FALSE,warning=FALSE}
+## G-computation (simple substitution estimator)
+n<-nrow(dat1)
+SL_library<- c('SL.glm',"SL.glmnet","SL.earth","SL.randomForest", "SL.mean")
+X <- X1 <- X0 <- dat1[,1:17]
+X1$exercise <- rep(1,n)
+X0$exercise <- rep(0,n)
+SL.outcome<- SuperLearner(Y = dat1$depression, X = X, 
+                          SL.library = SL_library, family = binomial)
+pred1 <- predict(SL.outcome, newdata=X)
+pred2 <- predict(SL.outcome, newdata=X1)
+pred3 <- predict(SL.outcome, newdata=X0)
+g<-mean(pred2$pred)-mean(pred3$pred)
+
+## IPTW(inverse probability of treatment weighted estimator)
+SL_exposure<- SuperLearner(Y = dat1$exercise, 
+                           X=dat1[, 1:16], #dplyr::select(dat1, -exercise, -depression),
+                           SL.library = SL_library, family = binomial)
+
+prob_A1_given_W<-SL_exposure$SL.predict
+prob_A0_given_W<-1-SL_exposure$SL.predict
+prob_AW <- numeric(n)
+prob_AW[dat1$exercise == 1] <- prob_A1_given_W[dat1$exercise == 1]
+prob_AW[dat1$exercise == 0] <- prob_A0_given_W[dat1$exercise == 0]
+H_AW <- I(dat1$exercise == 1)/prob_A1_given_W - I(dat1$exercise == 0)/prob_A0_given_W
+H_1W<-1/prob_A1_given_W
+H_0W<-1/prob_A0_given_W
+wt<-1/prob_AW
+iptw<-mean(dat1$exercise * wt * dat1$depression) - 
+  mean((1 - dat1$exercise) * wt * dat1$depression)
+
+# AIPW
+aipw<-mean((H_AW*(dat1$depression-pred1$pred))+pred2$pred-pred3$pred)
+
+# TMLE
+logit_update<- glm(dat1$depression ~ -1 + offset(qlogis(pred1$pred)) + H_AW, 
+                   family = binomial)
+epsilon<-summary(logit_update)$coefficients[1]
+m <- plogis(qlogis(pred1$pred)+epsilon*H_AW)
+m1<-plogis(qlogis(pred2$pred)+epsilon*H_1W)
+m0<-plogis(qlogis(pred3$pred)+epsilon*H_0W)
+tmle<-mean(m1-m0,na.rm=T)
+
+# standard error of the AIPW estimate
+aipw_se <- sd(H_AW *(dat1$depression - pred1$pred) + 
+                pred2$pred - pred3$pred) / sqrt(n)
+
+# standard error of the TMLE estimate
+tmle_se <- sd(H_AW *(dat1$depression - m) + m1 - m0) / sqrt(n)
+
+# 95% CI of AIPW and TMLE
+aipw_l<-aipw + qnorm(.025) * aipw_se
+aipw_u<-aipw + qnorm(.975) * aipw_se
+tmle_l<-tmle + qnorm(.025) * tmle_se
+tmle_u<-tmle + qnorm(.975) * tmle_se
+```
+
+**CV SuperLearner**
+
+Then we use cross-validation SuperLearner to figure out the coefficient of each algorithms of each fold (5 fold cross validation). 
+
+### Outcome
+
+According to the bellow plot, we can see the risk of `SL.glmenet` and `SL.mean` is lowest among those functions (around 0.15). Moreover, the coefficient table shows that `SL.glmenet` and `SL.mean` have the largest coefficients.    
+
+```{r,message=FALSE,warning=FALSE}
+## Cross validation in SuperLearner
+CV_SL_out <- CV.SuperLearner(Y = dat1$depression, X = X, 
+                             SL.library = SL_library, family = binomial,
+                             cvControl=list(V=5),
+                             innerCvControl=list(list(V=10)))
+
+CV_SL_exp <- CV.SuperLearner(Y = dat1$exercise, 
+                             X=dat1[, 1:16],#dplyr::select(dat1, -exercise, -depression),
+                             SL.library = SL_library, family = binomial,
+                             cvControl=list(V=5),
+                             innerCvControl=list(list(V=10)))
+
+plot(CV_SL_out)
+# returns the algorithm with lowest CV risk (discrete Super Learner) at each step.
+tab2<-cbind(data.frame(CV_fold=seq(1,5,by=1)),as.data.frame(CV_SL_out$coef),row.names=NULL)
+tab3<-cbind(data.frame(CV_fold=seq(1,5,by=1)),as.data.frame(CV_SL_exp$coef),row.names=NULL)
+knitr::kable(tab2)
+
+```
+
+### Exposure
+
+According to the following plot, we can see the risk of `SL.mean` is lowest among those functions (risk = 0.228). Moreover, the coefficient table shows that `SL.mean` have the largest coefficients.     
+
+```{r}
+plot(CV_SL_exp)
+knitr::kable(tab3)
+```
+
+## {.toc-ignore}
+
+**Check the positivity assumption**
+
+```{r}
+## positivity assumption
+pos_summary <- function(x){
+  c(min(x), quantile(x, c(.25, .5, .75)), mean(x),
+    max(x))
+}
+
+ans <- rbind(pos_summary(prob_A1_given_W),
+             pos_summary(H_1W)) %>%
+  as.data.frame()
+colnames(ans) <- c("Min", "1st Qu.", "Median", "Mean",
+                   "3rd Qu.", "Max")
+rownames(ans) <- c("Propensity score", "Weight")
+knitr::kable(ans)
+
+par(mfrow = c(1, 2))
+hist(prob_A1_given_W,xlab = "propensity score", main = "Histogram of \n propensity score")
+hist(H_1W, xlab = "Weight", main = "Histogram of\n weight")
+```
+
+According to the plots and table, the minimum $\hat{g}$(W) is 0.289, the maximum $\hat{g}$(W) is 0.404. The first quantile is 0.319 and third quantile is 0.341, and the mean is 0.375, 75% of $\hat{g}$(W) are around 0.319 to 0.341. The distribution of $\hat{g}$(W) is kind of skewed.
+
+The minimum of the corresponding non-stabilized weights is 2.47, the maximum corresponding non-stabilized weights is 3.46. The first quantile is 2.67 and third quantile is 2.96, and the mean is 3.13, 75% of corresponding non-stabilized weights are around 2.67 to 2.96. The distribution of corresponding non-stabilized weights is kind of skewed.
+
+As the corresponding non-stabilized weights range from 2 to 4, there is no extreme weight. Therefor, we do not add truncation to the corresponding non-stabilized weights.
+
+**Non-parametric bootstrap of IPTW and TMLE**
+
+We used the non-parametric bootstrap to estimate IPTW and TMLE as well as their 95% confidence intervals.     
+
+```{r,message=FALSE,warning=FALSE}
+set.seed(135)
+#  non-parametric bootstrap
+iptw_estimates<-vector(length = 100)
+tmle_estimates<-vector(length = 100)
+for(i in 1:100){
+  index<-sample(n,n,replace = T)
+  dat<-dat1[index,]
+  
+  X <- X1 <- X0 <- dat[,1:17]
+  X1$exercise <- rep(1,n)
+  X0$exercise <- rep(0,n)
+  SL.outcome<- SuperLearner(Y = dat$depression, X = X,
+                            SL.library = SL_library, family = binomial)
+  pred1 <- predict(SL.outcome, newdata=X)
+  pred2 <- predict(SL.outcome, newdata=X1)
+  pred3 <- predict(SL.outcome, newdata=X0)
+  
+  SL_exposure<- SuperLearner(Y = dat$exercise, 
+                             X=dat[, 1:16], #dplyr::select(dat, -exercise, -depression),
+                             SL.library = SL_library, family = binomial)
+  
+  prob_A1_given_W<-SL_exposure$SL.predict
+  prob_A0_given_W<-1-SL_exposure$SL.predict
+  prob_AW <- numeric(n)
+  prob_AW[dat$exercise == 1] <- prob_A1_given_W[dat$exercise == 1]
+  prob_AW[dat$exercise == 0] <- prob_A0_given_W[dat$exercise == 0]
+  H_AW <- I(dat$exercise == 1)/prob_A1_given_W- I(dat$exercise == 0)/prob_A0_given_W
+  H_1W<-1/prob_A1_given_W
+  H_0W<-1/prob_A0_given_W
+  wt<-1/prob_AW
+  logit_update<- glm(dat$depression ~ -1 + offset(qlogis(pred1$pred+0.001)) + H_AW,
+                     family = binomial)
+  epsilon<-summary(logit_update)$coefficients[1]
+  m <- plogis(qlogis(pred1$pred)+epsilon*H_AW)
+  m1<-plogis(qlogis(pred2$pred)+epsilon*H_1W)
+  m0<-plogis(qlogis(pred3$pred)+epsilon*H_0W)
+  iptw_estimates[i]<-mean(dat$exercise * wt * dat$depression) - 
+    mean((1 - dat$exercise) * wt * dat$depression)
+  tmle_estimates[i]<-mean(m1-m0,na.rm=T)
+}
+
+# view the histogram of estimates
+par(mfrow=c(1,2))
+hist(iptw_estimates,xlab = "IPTW", ylab = "", main = "Distribution of IPTW", breaks = 20)
+hist(tmle_estimates, xlab = "TMLE", ylab = "", main = "Distribution of TMLE", breaks = 20)
+
+# view the 95% CI
+# iptw
+c_l<-quantile(iptw_estimates,0.025)
+c_u<-quantile(iptw_estimates,0.975)
+# tmle
+c_l2<-quantile(tmle_estimates,0.025)
+c_u2<-quantile(tmle_estimates,0.975)
+```
+
+From the plots, we can see the distribution of IPTW is skewed, which range form -0.15 to 0. For TMLE, the distribution is kind of normal distribution with a right tail, which range from -0.15 to 0.15.
+
+**TMLE package**
+
+We also use TMLE package to estimate the tmle and the corresponding 95% CI by the function.
+
+```{r}
+## Use tmle package to calculate tmle
+t<-tmle(Y = dat1$depression, A = dat1$exercise, W = dat1[,1:16],
+        family = "binomial",Q.SL.library = SL_library,
+        g.SL.library= SL_library)
+```
+
+Below is our estimates table, including all estimators and corresponding 95% CI:
+
+**Estimates Table**
+
+```{r}
+## draw the table to show the estimates and 95% CI
+tab<-data.frame(Method = c("Unajusted Result","G-computation","IPTW",
+                           "Non-parametric boot IPTW","AIPW","TMLE",
+                         "Non-parametric boot TMLE",
+                         "TMLE by tmle package"), 
+           Estimate=round(c(theta,g,iptw,mean(iptw_estimates),aipw,tmle,
+                            mean(tmle_estimates),t$estimates$ATE$psi),5),
+           CI=c(paste0("(",round(tt$conf.int[1],5),",",round(tt$conf.int[2],5),")")
+                ,"","",paste0("(",round(c_l,5),",",round(c_u,5),")"),
+                paste0("(",round(aipw_l,5),",",round(aipw_u,5),")"),
+                paste0("(",round(tmle_l,5),",",round(tmle_u,5),")"),
+                paste0("(",round(c_l2,5),",",round(c_u2,5),")"),
+                paste0("(",round(t$estimates$ATE$CI[1],5),",",
+                       round(t$estimates$ATE$CI[2],5),")")))
+colnames(tab)<- c("Method", "Estimate", "95% CI")
+knitr::kable(tab)
+```
+
+
+## Step 7: Interpretation
+  **Statistical Interpretation**
+
+   Based on the analyses described above, physical activity is negatively associated with depression among American adults. To be specific, the chance of diagnosing depression is a bit lower in American adults who spent more than 3 days doing vigorous-intensity sports, fitness, or recreational activities in a week compared to those who spent less than 3 days doing vigorous-intensity sports, fitness or recreational activities in a week.      
+   
+**Different Estimators**      
+   We computed the unadjusted estimator (without considering any covariates), two IPTW estimators (by hand code and by non-parametric bootstrap), AIPW, and three TMLE estimators (by hand code, non-parametric bootstrap, and tmle package). The comparison table can be found above. Among all these estimators, the IPTW computed by non-parametric bootstrap has the lowest estimated value (-0.085) compared to others, while G-computation has the highest estimated value (-0.013). We also derived the 95% confidence intervals for all estimators except for IPTW and data substitution based on the sample data. It seems like at a 0.05 significance level, only the non-parametric bootstrap estimators (IPTW and TMLE) are significant.      
+
+**Causal Interpretation**     
+
+Based on the analyses described above, physical activities have a negative causal effect on depression among American adults. The physical activity decrease the probability of depression of American adults age 20-65. To be specific, the chance of diagnosing with depression in the counterfactual world that all American adults spent more than 3 days doing vigorous-intensity sports, fitness or recreational activities in a week is a bit lower compared to the counterfactual world that all American adults spent less than 3 days doing vigorous-intensity sports, fitness or recreational activities in a week.      
+
+This result is plausible since many researches suggested that physical activity can reduce depression symptoms. [2]        
+
+**Limitations**     
+Our analysis also has some limitations. Firstly, self-reported depression might not correctly reflect each individual's depression situation since some of them might tend not to realize that they have depression even if they did. Secondly, some unconsidered covariates might have influences on depression since the lack of data (Eg. diet habits, personalities and so on). Last but not least, we dropped a lot of missing values in the data preprocessing procedure and only have 351 completed cases for the analysis, which might lead to some bias in our results.
+   
+
+**Impact on Policy**       
+Our results might inspire policy makers to focus more on people's physical activities and encourage American adults to do more exercise to lower the prevalence of depression.    
+
+**Future Directions**      
+For future analysis, we have the following three proposals:   
+1. Researchers could engage more subjects to enlarge the sample size, so we could have narrower confidence intervals.    
+2. Instead of using exercise days in a week as the intervention, researchers could intervene on adults' actual energy expenditure per week to get more precise results.     
+3. To make independence assumption more plausible for our causal problem, investigators might consider more covariates in the future study based on new background knowledge.      
+
+    
+
+# Contributions   
+
+* Wenyu Zhu: Background Information, Data Extraction, Roadmap 6      
+
+* Tianran: Background Information, Data Preprocessing, Roadmap 7      
+
+* Yinuo Liu: Background Information, Data set Exploration, Roadmap 1-5            
+
+
+# Reference
+[1] [NHANES]<cdc.gov/nchs/nhanes/index.htm>.     
+[2] Staff, M. C. Depression and anxiety: Exercise eases symptoms [Online].[cited 2009].  
+
+# Appendix
+**Appendix 1: Data Frame**    
+```{r}
+NHANES_Depression_Data<-dat2
+NHANES_Depression_Data<-NHANES_Depression_Data
+print(dfSummary(NHANES_Depression_Data), method = "render", headings=F,labels.col=F,valid.col=F,na.col=F)
+```
+
+&nbsp;&nbsp;    
+**Appendix 2: Redefine Variables**     
+```{r}
+kable(tribble(
+  ~"Variable",~"In Obssserved data set",~"In our redefined data set", ~"Reason for redefine",
+  "education","[Factor] 6 levels: 1. Less than 9th grade 2. 9-11th grade (Includes 12 3. High school graduate/GED 4. Some college or AA degree 5. College graduate or above 6. Don't Know ","[factor]2 levels: 1. College or above 2. under college","Simplification",
+  "household_income ","[Factor] 16 levels: 1. $ 0 to $ 4,999 2. $ 5,000 to $ 9,999 3. $10,000 to $14,999 4. $15,000 to $19,999 5. $20,000 to $24,999 6. $25,000 to $34,999 7. $35,000 to $44,999 8. $45,000 to $54,999 9. $55,000 to $64,999 10. $65,000 to $74,999 (6 others)","[Factor] 2 levels: 1. ≥$35,000 2. <$35,000","Simplification",
+  "drug_use","[Factor] 4 levels: 1. Yes 2. No 3. Refused 4. Don't know","[Factor] 2 levels: 1. Yes 2. No","Remove levels with 0 0bservation",
+  "difficulty_hearing","[Factor] 3 levels: 1. Yes 2. No 3. Don't know","[Factor] 2 levels: 1. Yes 2. No","Remove levels with 0 0bservation",
+  "difficulty_seeing","[Factor] 3 levels: 1. Yes 2. No 3. Don't know","[Factor] 2 levels: 1. Yes 2. No","Remove levels with 0 0bservation",
+  "difficulty_concentrating","[Factor] 3 levels: 1. Yes 2. No 3. Don't know","[Factor] 2 levels: 1. Yes 2. No","Remove levels with 0 0bservation",
+   "difficulty_walking","[Factor] 3 levels: 1. Yes 2. No 3. Don't know","[Factor] 2 levels: 1. Yes 2. No","Remove levels with 0 0bservation",
+  "alcohol_use","[Factor] 3 levels: 1. Yes 2. No 3. Don't know","[Factor] 2 levels: 1. Yes 2. No","Remove levels with 0 0bservation",
+  "health_condition","[Factor] 5 levels: 	1. Excellent 2. Very good, 3. Good, 4. Fair, or 5. Poor", "[Factor] 2 levels: 1. good 2. not good","Simplification",
+  "hypertension","[Factor] 3 levels: 1. Yes 2. No 3. Don't know","[Factor] 2 levels: 1. Yes 2. No","Remove levels with 0 0bservation",
+  "diabetes","[Factor] 4 levels: 1. Yes 2. No 3. Borderline 4. Don't know","[Factor] 2 levels: 1. Yes 2. No","Remove levels with 0 0bservation",
+  "cardiovascular_disease ","[Factor] 4 levels: 1. Yes 2. No 3. Refused 4. Don't know","[Factor] 2 levels: 1. Yes 2. No","Remove levels with 0 0bservation",
+  "exercise","[integer] Days vigorous recreational activities: Mean (sd) : 3.1 (1.5) min < med < max: 1 < 3 < 7 IQR (CV) : 2 (0.5)","[Factor] 2 levels: 1. >3 days 2.≤ 3 days","Simplification, cutoff point is 3, which is the mean value of original distribution",
+  "depression","[Factor] 4 levels: 1. Not at all 2. Several days 3. More than half the days 4. Nearly every day","[Factor] 2 levels: 1. Yes 2. No","Simplification"
+))
+
+```
+
+&nbsp;&nbsp;    
+**Appendix 3: Variables Description (after redefinition of variables)**         
+ 
+ - Age: Age at screening, a continuous variable from 20-65.
+
+ - Gender: Gender with 1 as female and 0 as male.
+
+ - Education level: Education level, a binary covariate (College or above = 1, under college = 0).
+
+ - Race: Race, a categorical variable (Mexican American =1, Non-Hispanic Asian =2, Non-Hispanic Black = 3, Non-Hispanic White = 4, Other Hispanic = 5, Other Race = 6)
+
+ - Income: Total household income, a binary covariate (>\$35,000 = 1, $\leq$ \$35,000 = 0).
+
+ - Drug use: If the participants ever, even once, used marijuana or hashish, a binary covariate (yes = 1, no = 0).
+
+ - Difficulty hearing: If the participants have serious difficulty hearing, a binary covariate (yes = 1, no = 0).
+
+ - Difficulty seeing: If the participants have serious difficulty seeing, a binary covariate (yes = 1, no = 0).
+
+ - Difficulty concentrating: If the participants have serious difficulty concentrating, a binary covariate(yes = 1, no = 0).
+
+ - Difficulty walking: If the participants have serious difficulty walking, a binary covariate (yes = 1, no = 0).
+
+ - Sleep disorder: Sleep hours at night on weekdays or workdays, a continuous variable from 2-14.5.
+
+ - Alcohol use: If the participants have at least 12 oz. alcohol drinks a year, a binary covariate (yes = 1, no = 0).
+
+ - Health condition: self-reported general health condition, a binary covariate (good = 1, not good = 0).
+ 
+ - Hypertension: If the participants have hypertension, a binary covariate (yes = 1, no = 0)
+ 
+ - Diabetes: If the participants have diabetes, a binary covariate (yes = 1, no = 0)
+ 
+ - Cardiovascular Disease: If the participants have cardiovascular disease, a binary covariate (yes = 1, no = 0)
+
+ - A: Physical activities, which shows the number of days doing vigorous-intensity sports, fitness or recreational activities in a week, a binary variable (>3 days = 1, $\leq$ 3 days = 0).   
+
+ - Y: Depression, which shows the frequency of feeling down, depressed, or hopeless over the last 2 weeks, a binary outcome (depression = 1, not depression = 0).      
+

@@ -1,0 +1,129 @@
+---
+title: "Lab2"
+author: "Tianran Zhang"
+date: "5/13/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+```
+
+
+9. 
+```{r}
+set.seed(252)
+n <- 5000
+```
+
+10. 
+```{r}
+U_w1 <- runif(n, 0, 1)
+U_w2 <- rbinom(n, 1, 0.5)
+U_A <- rnorm(n, -3, 1)
+U_Y <- rnorm(n, 0, 0.3)
+```
+
+11. 
+```{r}
+x <- data.frame(U_w1)
+x <- x %>%
+  mutate(W1 = ifelse(U_w1 < 0.35, 1, 0), W2 = W1 + 2 * U_w2,
+         A = ifelse((1 + W1 + 2 * W2 + U_A) >0, 1, 0),
+         Y = 1 + 2.5 * A + 3 * W1 - 0.25 * A * W1 + U_Y) %>%
+  select(-U_w1)
+
+head(x)
+```
+
+12. 
+```{r}
+x <- x %>%
+  mutate(Y1 = 1 + 2.5 + 3 * W1 - 0.25 * W1 + U_Y,
+         Y0 = 1 + 3 * W1 + U_Y)
+head(x)
+```
+
+13. 
+```{r}
+x %>%
+  mutate(Ya = ifelse(A == 1, Y1, Y0),
+         not_equal = sum(Ya != Y)) %>%
+  pull(not_equal) %>%
+  head(n = 1)
+
+```
+
+Yes, the counterfacual value Ya equals the observed Y when A = a.
+
+14. 
+```{r}
+mean(x$Y1 - x$Y0) %>% round(3)
+```
+
+15. 
+```{r}
+n <- 5
+U_A <- runif(n, 0, 2)
+U_Y <- rnorm(n, 0, 0.3)
+```
+
+16. 
+```{r}
+x1 <- data.frame(Student = rep(1:5, each = 5), A = rep(1:5, 5), U_Y = rep(U_Y, each = 5))
+x1 <- x1 %>%
+  mutate(Ya = 4 + 9 * A - 2.25 * A^2 + U_Y) %>%
+  mutate(Student = as.factor(Student))
+
+head(x1)
+```
+
+17. 
+```{r}
+ggplot(x1) +
+  geom_point(mapping = aes(x = A, y = Ya, col = Student), size = .5)
+
+```
+
+20. 
+```{r}
+glm(Ya ~ A, data = x1)
+
+```
+beta0 = 19.86, beta1 = -4.5
+m(a|beta) = 19.86 - 4.5 * a
+Interpretation:
+
+22. 
+```{r}
+ggplot(x1, mapping = aes(x = A, y = Ya)) +
+  geom_point(size = .5) +
+  geom_smooth(method = "glm", se = F)
+
+
+```
+
+
+23. 
+```{r}
+# a. 
+a <- seq(0, 4, .01)
+
+# b. 
+E_Ya <- 4 + 9 * a - 2.25 * a^2
+x2 <- data.frame(a, E_Ya)
+
+# c. 
+ggplot() +
+  geom_point(data = x1, mapping = aes(x = A, y = Ya), size = .5) + 
+  xlim(c(0, 4)) + 
+  geom_line(data = x2, aes(x = a, y = E_Ya)) +
+  ggtitle("True causal curve")
+
+```
+
+ 

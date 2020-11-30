@@ -1,0 +1,202 @@
+---
+title: "Data_Processing"
+author: "Tianran Zhang"
+date: "7/16/2020"
+output: html_document
+---
+```{r,message=FALSE}
+library(nhanesA)
+library(tidyverse)
+library(janitor)
+```
+
+```{r,include=F,results=F}
+################################
+## Load the data from nhanesA ##
+################################
+
+# get the depression data
+dp <- nhanes("DPQ_I")
+
+# [Over the last 2 weeks, how often have you been bothered by the following problems: feeling down, depressed, or hopeless?
+
+# 
+dp <- nhanesTranslate('DPQ_J', c('DPQ020'), data=dp)
+
+dp <- dp[, c("SEQN", "DPQ020")]
+```
+```{r,include=F,results=F}
+# get the demograph data
+de <- nhanes("DEMO_I")
+
+# RIAGENDR - Gender
+# RIDAGEYR - Age in years at screening 
+# DMDEDUC2 - Education level - Adults 20+
+# RIDRETH3 - Race/Hispanic origin w/ NH Asian
+# INDHHIN2 - Annual household income
+## What is the highest grade or level of school {you have/SP has} completed or the highest degree {you have/s/he has} received?
+# INDFMPIR - Ratio of family income to poverty
+
+
+de <- nhanesTranslate('DEMO_I',c("RIAGENDR","RIDAGEYR","DMDEDUC2","RIDRETH3","INDHHIN2"),data=de)
+
+de <- de[, c("SEQN", "RIAGENDR","RIDAGEYR","DMDEDUC2","RIDRETH3","INDHHIN2")]
+```
+
+```{r,include=F,results=F}
+# get the physical activity data
+pa <- nhanes("PAQ_I")
+
+# PAQ655 - Days vigorous recreational activities
+# In a typical week, on how many days {do you/does SP} do vigorous-intensity sports, fitness or recreational activities?
+ 
+pa <- nhanesTranslate('PAQ_I', c('PAQ655'), data=pa)
+
+pa <- pa[, c("SEQN", "PAQ655")]
+
+# PAQ655 - Days vigorous recreational activities
+# In a typical week, on how many days {do you/does SP} do vigorous-intensity sports, fitness or recreational activities?
+
+# current health condition
+h <- nhanes("HSQ_I")
+# General health condition
+h <- nhanesTranslate('HSQ_I', c('HSD010'), data=h)
+h <- h[, c("SEQN", "HSD010")]
+
+# Alcohol use
+a <- nhanes("ALQ_I")
+# ALQ101 - How often drink alcohol over past 12 mos
+a <- nhanesTranslate('ALQ_I', c('ALQ101'), data=a)
+a <- a[, c("SEQN", "ALQ101")]
+
+# Sleep disorder
+sd <- nhanes("SLQ_I")
+# SLD012 - Sleep hours
+sd <- nhanesTranslate('SLQ_I', c('SLD012'), data=sd)
+sd <- sd[, c("SEQN", "SLD012")]
+
+# disability
+d <- nhanes("DLQ_I")
+# DLQ010 - Have serious difficulty hearing?
+# DLQ020 - Have serious difficulty seeing?
+# DLQ040 - Have serious difficulty concentrating?
+# DLQ050 - Have serious difficulty walking?
+d <- nhanesTranslate('DLQ_I', c("DLQ010", "DLQ020", "DLQ040", "DLQ050"), data=d)
+d <- d[, c("SEQN", "DLQ010", "DLQ020", "DLQ040", "DLQ050")]
+
+# Drug use
+du <- nhanes("DUQ_I")
+# ALQ101 - How often drink alcohol over past 12 mos
+du <- nhanesTranslate('DUQ_I', c("DUQ200"), data=du)
+du <- du[, c("SEQN", "DUQ200")]
+
+# get the hypertension data
+bp <- nhanes("BPQ_I")
+
+# BPQ020 - "{Have you/Has SP} ever been told by a doctor or other health professional that {you/s/he} had hypert"
+
+bp <- nhanesTranslate('BPQ_I', c("BPQ020"), data=bp)
+
+bp <- bp[, c("SEQN", "BPQ020")]
+
+# get the diabetes data
+di <- nhanes("DIQ_I")
+
+# DIQ010 - Doctor told you have diabetes
+
+di <- nhanesTranslate('DIQ_I', c('DIQ010'), data=di)
+
+di <- di[, c("SEQN", "DIQ010")]
+
+# get the Cardiovascular Disease 
+
+cd <- nhanes("CDQ_I")
+# CDQ001 - SP ever had pain or discomfort in chest
+cd <- nhanesTranslate('CDQ_I', c('CDQ001'), data=cd)
+
+cd <- cd[, c("SEQN",'CDQ001')]
+
+dat1<- disease<-merge(merge(bp,di),cd)
+dat1$ncd<-ifelse(dat1$BPQ020 == "Yes" | dat1$DIQ010 == "Yes" | dat1$CDQ001 == "Yes",1,0)
+cmb<-dat1[,c("SEQN","ncd")]
+```
+
+
+```{r,results=F}
+###############################
+## The structure of the data ##
+###############################
+dat <- merge(de,du, by = "SEQN", all = TRUE)
+dat <- merge(dat,d, by = "SEQN", all = TRUE)
+dat <- merge(dat,sd, by = "SEQN", all = TRUE)
+dat <- merge(dat,a, by = "SEQN", all = TRUE)
+dat <- merge(dat,h, by = "SEQN", all = TRUE)
+dat <- merge(dat,bp, by= "SEQN", all = TRUE)
+dat <- merge(dat,di, by= "SEQN", all = TRUE)
+dat <- merge(dat,cd, by= "SEQN", all = TRUE)
+dat <- merge(dat,pa, by = "SEQN", all = TRUE)
+dat <- merge(dat,dp, by = "SEQN", all = TRUE)
+dat <- dat[complete.cases(dat),]
+dat<- dat[,-1]
+
+colnames(dat)<-c("Gender","Age","Education","Race","Household_income",
+                 "Drug_use","Difficulty_hearing","Difficulty_seeing",
+                 "Difficulty_concentrating","Difficulty_walking",
+                 "Sleep_disorder","Alcohol_Use",
+                 "Health condition","Hypertension","Diabetes","Cardiovascular Disease",
+                 "Exercise","Depression")
+
+dat <- dat %>%
+  filter(Drug_use != "Refused", Drug_use != "Don't know",
+         Difficulty_hearing != "Don't know", 
+         Difficulty_seeing != "Don't know", 
+         Difficulty_concentrating != "Don't know",
+         Difficulty_walking != "Don't know",
+         Diabetes !="Borderline",
+         Age <= 65, Depression != "Refused") %>%
+  mutate(Depression = factor(Depression))
+
+dat <- dat[dat$Household_income != "Don't know" & dat$Household_income != "Refused", ]
+dat1 <- dat
+```
+
+```{r}
+dat <- clean_names(dat1)
+dat2 <- clean_names(dat1)
+
+dat$depression <- ifelse(dat$depression == "Not at all", "No", "Yes")
+
+dat$health_condition <- ifelse(dat$health_condition 
+                               %in% c("Excellent", "Good,", "Very good,"),
+                               "Good", "Not Good")
+dat$education <- ifelse(dat$education %in% 
+                          c("College graduate or above","Some college or AA degree"), "College or above", "Under College")
+
+dat$exercise <- ifelse(dat$exercise %in% c("1", "2", "3"), "low", "high")
+
+dat$hypertension <- ifelse(dat$hypertension %in% c("No"), "No", "Yes")
+
+dat$diabetes <- ifelse(dat$diabetes %in% c("No"), "No", "Yes")
+
+dat$cardiovascular_disease <- ifelse(dat$cardiovascular_disease %in% c("No"), "No", "Yes")
+
+dat$household_income <- ifelse(dat$household_income %in% c('$ 0 to $ 4,999', '$ 5,000 to $ 9,999', '$10,000 to $14,999', '$100,000 and Over', '$15,000 to $19,999', '$20,000 and Over', '$20,000 to $24,999', '$25,000 to $34,999', 'Under $20,000'), "low", "high")
+
+```
+
+```{r}
+factor.var <- c('drug_use', 'difficulty_hearing', 'difficulty_seeing', 
+                'difficulty_concentrating', 'difficulty_walking', 
+                'alcohol_use', 'health_condition', 'gender', 'education',
+                'race', 'household_income', "hypertension","diabetes","cardiovascular_disease",
+                'exercise','depression')
+dat[, factor.var] <- sapply(dat[, factor.var], as.factor)
+dat[, factor.var] <- lapply(dat[, factor.var], as.factor)
+
+str(dat)
+```
+
+
+```{r}
+save(dat,dat2, file = "Depression.RData")
+```

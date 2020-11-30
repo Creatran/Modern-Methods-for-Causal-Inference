@@ -1,0 +1,209 @@
+---
+title: "hw4_Tianran"
+author: "Tianran Zhang"
+date: "6/20/2020"
+output: 
+  html_document:
+    code_folding: hide
+    theme: readable
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: no
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(tidyverse)
+library(nnet)
+library(sandwich)
+library(kableExtra)
+```
+# Import and explore data 
+
+**0. Import `HW3_IPTW.csv` and assign it to object `ObsData`.**
+```{r}
+ObsData <- read.csv("hw4_IPTW.csv")
+```
+
+**1. Assign the number of riders to `n`.**
+```{r}
+n <- nrow(ObsData)
+```
+
+**2. Use the  `summary` function to explore the data.**
+```{r}
+summary(ObsData)
+```
+
+**3. Are there certain covariate combinations with limited variability in the exposure (pull-ups completed)? Comment on your findings.**
+```{r}
+ObsData %>%
+  group_by(W1, W2, A) %>%
+  ftable(row.vars = c("W1", "W2"), col.vars = "A") 
+```
+
+Some covariate combinations have limited variability in the exposure (pull-ups completed) based on the table above. For example: only 2 riders with (W1 = 1, W2 = 0) completed 1 pull-ups; 5 riders with (W1 = 2, W2 = 1) completed 7 pull-ups; 1 riders with (W1 = 3, W2 = 1) completed 7 pull-ups.    
+
+# IPTW for two levels of the exposure
+
+Suppose we are interested in the difference in the expected happiness if all riders completed 7 pull-ups  ($A=7$) and if all riders only completed 1 pull-up ($A=1$): \[
+\theta^*(\mathrm{P}^*) = \mathrm{E}^*(Y_7) - \mathrm{E}^*(Y_1)
+\]
+
+**4. We need to estimate the treatment mechanism $\mathrm{P}(A|W)$, which is the conditional probability of completing $A$ pull-ups, given the rider's characteristics.** 
+
+```{r}
+prob_AW_reg <- multinom(A ~ W1 + W2, data=ObsData, trace = F)
+```
+
+**5. Predict each rider's probability of his/her observed exposure (pull-ups completed), given his/her covariates $\hat{\mathrm{P}}(A_i|W_i)$:**    
+
+  a) Use the `predict` function to obtain the predicted probability of each exposure level, given the rider's covariates. Be sure to specify `type="probs"`.
+
+```{r}
+prob_AW_pred_matrix<- predict(prob_AW_reg, type="probs")
+```
+
+   b) Create an empty vector `prob_AW` of length $n$ for the predicted probabilities of each rider's observed exposure (pull-ups completed), given their covariates.
+   
+```{r}
+prob_AW <- numeric(n)
+```
+  c) Among riders with exposure level $A=1$, assign the appropriate predicted probability:
+  
+```{r}
+prob_AW[ObsData$A==1] <- prob_AW_pred_matrix[ObsData$A==1, "1"]
+```
+
+  d) Implement the analogous code for exposure levels $A=2, \dots, A=7$.
+ 
+```{r}
+for (a in 2:7) {
+  prob_AW[ObsData$A==a] <- prob_AW_pred_matrix[ObsData$A==a, as.character(a)]
+}
+
+``` 
+  e) Use the `summary` function to examine the distribution of predicted probabilities. Is there any cause for concern?
+```{r}
+summary(prob_AW)
+```
+
+  The minumum predicted probabilities is very small (min = 0.002). The "near" violations of the positivity assumption can result in poor finite sample performance, and these individules with small predicted probabilites would get big weights, which will lead to high variance estimator.     
+  
+**6. Create the  vector `wt` as the inverse of the predicted probabilities. Use the `summary` function to examine the distribution of weights. Comment on the distribution of weights.**
+
+```{r}
+wt <- 1/prob_AW
+summary(wt)
+```
+The weights have a range from 2.9 to 499.7, with a median value of 3.98. It seems the weights distribution is quite skewed with a long tail on the right side.    
+
+**7. Evaluate the IPTW estimand:**
+\[
+\hat{\theta}_{IPTW} = \frac{1}{n}\sum_{i=1}^n \frac{\mathrm{I}(A_i=7)}{\hat{\mathrm{P}}(A_i|W_i)}Y_i - \frac{1}{n}\sum_{i=1}^n \frac{\mathrm{I}(A_i=1)}{\hat{\mathrm{P}}(A_i|W_i)}Y_i
+\]
+```{r}
+theta.IPTW <- sum(I(ObsData$A == 7) * ObsData$Y * wt)/n - 
+  sum(I(ObsData$A == 1) * ObsData$Y * wt)/n
+```
+
+  The estimated IPTW estimand is `r round(theta.IPTW, 4)`.   
+
+**8. Implement the stabilized IPTW estimator:**
+$$ \hat{\theta}_{Stab.IPTW} = \frac{ \frac{1}{n} \sum_{i=1}^n  \frac{\mathrm{I}(A_i=7)}{\hat{\mathrm{P}}(A_i|W_i)} Y_i } {\frac{1}{n} \sum_{i=1}^n  \frac{\mathrm{I}(A_i=7)}{\hat{\mathrm{P}}(A_i|W_i)} } - \frac{ \frac{1}{n} \sum_{i=1}^n  \frac{\mathrm{I}(A_i=1)}{\hat{\mathrm{P}}(A_i|W_i)} Y_i } { \frac{1}{n} \sum_{i=1}^n  \frac{\mathrm{I}(A_i=1)}{\hat{\mathrm{P}}(A_i|W_i)} } $$
+
+```{r}
+theta.Stab.IPTW <- sum(I(ObsData$A == 7) * ObsData$Y * wt)/sum(I(ObsData$A == 7) * wt) -
+  sum(I(ObsData$A == 1) * ObsData$Y * wt)/sum(I(ObsData$A == 1) * wt)
+
+```
+the stabilized IPTW estimator is `r round(theta.Stab.IPTW, 4)`
+
+**9. Interpret the point estimates.**      
+
+  The expected happiness would increase by `r round(theta.IPTW, 4)` when a rider completed 7 pull-ups (A = 7) compared to this rider completed 1 pull-up (A = 1) with the IPTW estimator.    
+  The expected happiness would increase by `r round(theta.Stab.IPTW, 4)` when a rider completed 7 pull-ups (A = 7) compared to this rider completed 1 pull-up (A = 1) with the stabilized IPTW estimator.    
+   
+# IPTW & Marginal Structural Models 
+## IPTW for the MSM parameter without stabilized weights:
+
+**10. Implement step 4. Remember to specify the `weights` and the `data`.**
+```{r}
+fit1 <- lm(Y ~ A, weights = wt, dat = ObsData)
+fit1
+```
+
+fitted model: \[
+\hat{\mathrm{E}}^*(Y_a) = \hat{m}(a | \beta) = 33.084+ 1.096 a
+\]
+
+**11. Interpret the results.**    
+  The fitted model shows that the expected happiness would increase by 1.096 with one pull-up increase by a rider.    
+
+## IPTW for an MSM parameter with Stabilized Weights
+
+**12. Implement step 3 by doing the following:**
+
+  a) Create empty vector `prob_A` of length $n$ for the numerator of the weights.
+```{r}
+prob_A <- numeric(n)
+```
+
+  b) Index the vector `prob_A` by exposure status and assign the appropriate estimated probability. 
+
+```{r}
+for (a in 1:7){
+  prob_A[ObsData$A==a] <- mean(ObsData$A==a)
+}
+```
+
+  c) Create the stabilized weight:
+```{r}
+wt_MSM <- prob_A/prob_AW
+```
+
+**13. Briefly comment on the distribution of the stabilized weights.**
+```{r}
+summary(wt_MSM)
+```
+
+The stabilized weights have a range from 2.9 to 11.87, with a median value of 0.96. It does not have extrame large values on the right side as in the standard weights. It seems the estimator calculated with stabilized weights would have a relatively small variation compared to the previous estimator with standard weights.     
+
+**14. Estimate the parameters corresponding to the MSM by regressing the observed outcome $Y$ and on the exposure $A$.** 
+```{r}
+fit2 <- lm(Y ~ A, weights = wt_MSM, data = ObsData)
+fit2
+```
+
+fitted model: \[
+\hat{\mathrm{E}}^*(Y_a) = \hat{m}(a | \beta) = 33.671+ 1.025 a
+\]
+The fitted model shows that the expected happiness would increase by 1.025 for one pull-up increase by a rider.    
+
+# Model comparisons
+
+**15. Are the estimated coefficients the same? Briefly discuss.**     
+  The estimated coefficients are only slightly different. They are not the same because the two models are fitted with different weights.   
+  
+**16. Calculate the robust ("sandwich estimate") standard error of the estimated coefficient and compare to the model-based errors. In what situations should we use the robust standard errors?**       
+  The robust ("sandwich estimate") standard error: 
+```{r}
+data.frame('robust standard error' =
+             sqrt(diag(vcovHC(fit2, sandwich = T)))) %>%
+  kable() %>%
+  kable_styling()
+```
+
+The model-based errors:
+
+```{r}
+data.frame('model-based errors' =
+             summary(fit2)$coefficients[, 2]) %>%
+  kable()%>%
+  kable_styling()
+```
+
+If our model is correct, or the data is homoskedasticity, there is no huge difference in the estimated robust errors and the model-based errors. However, if the supposed model is incorrect, or there when the data is heteroskedasticity, we should use the robust ("sandwich estimate") standard error instead of model-based errors.     
+Besides, 'lm' or 'glm' treats the weights as ﬁxed, when they were in fact estimated. Suppose the weights were estimated using MLE according to a correctly speciﬁed parametric regression, then the resulting standard error estimates will be conservative. If the weights were estimated with machine learning (e.g. Super Learner), the standard error estimates may not be conservative.   

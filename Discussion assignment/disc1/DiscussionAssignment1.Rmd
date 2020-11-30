@@ -1,0 +1,98 @@
+---
+title: "Discussion assignment 1"
+author: "Tianran Zhang"
+date: "5/17/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ggdag)
+library(dagitty)
+library(ggplot2)
+```
+
+# Background Story
+## Steps 1-2 of the Roadmap
+**Step 1: Causal model representing real knowledge**
+
+1. Draw the accompanying directed acyclic graph (DAG).    
+
+```{r}
+dag <- dagitty("dag{
+               W1 <- Uw1
+               W2 <- W1
+               W2 <- Uw2
+               W3 <- Uw3
+               W3 <- W1
+               W3 <- W2
+               W4 <- Uw4
+               W4 <- W1
+               W4 <- W2
+               W4 <- W3
+               A <- W1
+               A <- W2
+               A <- W3
+               A <- W4
+               A <- UA
+               Y <- W1
+               Y <- W2
+               Y <- W3
+               Y <- W4 
+               Y <- A
+               Y <- UY
+}")
+tidy_dag <- tidy_dagitty(dag)
+
+ggdag(tidy_dag, layout = "circle")
+```
+
+
+```{r}
+dag1 <- dagitty("dag{
+               W1 <- Uw1
+               W2 <- W1
+               W2 <- Uw2
+               W3 <- Uw3
+               W3 <- W1
+               W3 <- W2
+               W4 <- Uw4
+               W4 <- W1
+               W4 <- W2
+               W4 <- W3
+               A <- 1
+               Y <- W3
+               Y <- W4 
+               Y <- A
+               Y <- UY
+}")
+tidy_dag1 <- tidy_dagitty(dag1)
+
+ggdag(tidy_dag1, layout = "circle")
+```
+
+
+```{r}
+dag2 <- dagitty("dag{
+               W1 <- Uw1
+               W2 <- W1
+               W2 <- Uw2
+               W3 <- Uw3
+               W3 <- W1
+               W3 <- W2
+               W4 <- Uw4
+               W4 <- W1
+               W4 <- W2
+               W4 <- W3
+               A <- 0
+               Y <- W3
+               Y <- W4 
+               Y <- A
+               Y <- UY
+}")
+tidy_dag2 <- tidy_dagitty(dag2)
+
+ggdag(tidy_dag2, layout = "circle")
+```
+

@@ -1,0 +1,203 @@
+---
+title: "Lab7_Tianran"
+author: "Tianran Zhang"
+date: "7/20/2020"
+output:
+  html_document:
+    code_folding: hide
+    theme: readable
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: no
+  word_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F)
+
+library(lmtp)
+library(sl3)
+library(future)
+library(progressr)
+library(tidyverse)
+```
+
+**0. Set the seed to 7 and load in the data from Lab 6 (`RLab6_TMLE.csv`).** 
+```{r}
+set.seed(7)
+ObsData <- read.csv("../Lab6/RLab6_TMLE.csv")
+ObsData <- ObsData[, -1]
+```
+
+**1. Using the function `lmtp_tmle`, estimate the population outcome for a hypothetical world in which all children received the reading program intervention, adjusting for baseline confounders $W_1$, $W_2$, $W_3$, and $W_4$.** 
+
+```{r}
+#lrnrs <- make_learner_stack(Lrnr_mean, Lrnr_glm, Lrnr_ranger)
+lrnrs <- make_learner_stack(Lrnr_xgboost, 
+                            Lrnr_glmnet, 
+                            list(Lrnr_ranger, num.trees = 1000))
+lmtp_tmle(data = ObsData, trt = "A", outcome = "Y", 
+          baseline = c("W1", "W2", "W3", "W4"), 
+          learners_outcome = lrnrs,
+          learners_trt = lrnrs,
+          shift = static_binary_on,
+          outcome_type = "continuous") -> theta.all.tmle
+```
+
+**2. Using the function `lmtp_tmle`, estimate the population outcome for a hypothetical world in which none of the children received the reading program intervention, adjusting for baseline confounders $W_1$, $W_2$, $W_3$, and $W_4$.**
+
+```{r}
+lmtp_tmle(data = ObsData, trt = "A", outcome = "Y", 
+          baseline = c("W1", "W2", "W3", "W4"), 
+          learners_outcome = lrnrs,
+          learners_trt = lrnrs,
+          shift = static_binary_off,
+          outcome_type = "continuous") -> theta.none.tmle
+```
+
+**3. Use the `lmtp_contrast` function to obtain standard errors, confidence intervals, and p-values for an estimate of $\theta = \mathrm{E}[Y_1] - \mathrm{E}[Y_0]$.**
+
+```{r}
+lmtp_contrast(theta.all.tmle, ref = theta.none.tmle, 
+              type = "additive")
+# ?lmtp_contrast
+```
+
+**4. Interpret the output of `lmtp_contrast`. What are the `"theta"`, `"shift"`, and `"ref"` values?**    
+`theta` represents the estimation of average treatment effect. shift is the average;    
+`shift` represents the estimation the population outcome for a hypothetical world in which all children received the reading program intervention, adjusting for baseline confounders $W_1$, $W_2$, $W_3$, and $W_4$;   
+`ref` represents the estimation of the population outcome for a hypothetical world in which none of the children received the reading program intervention, adjusting for baseline confounders $W_1$, $W_2$, $W_3$, and $W_4$.  
+
+**5. Repeat steps 1 and 2 using the `lmtp_sub` and `lmtp_ipw` functions to implement G-compuation (substitution) and inverse probability weighting estimating. This time, add progress bars by adding `with_progress({ })` around your code.**     
+
+*G-computation (substitution)*
+```{r}
+with_progress({
+  lmtp_sub(data = ObsData, trt = "A", outcome = "Y", 
+          baseline = c("W1", "W2", "W3", "W4"), 
+          learners = lrnrs,
+          shift = static_binary_on,
+          outcome_type = "continuous") -> theta.all.sub
+  })
+
+with_progress({
+  lmtp_sub(data = ObsData, trt = "A", outcome = "Y", 
+          baseline = c("W1", "W2", "W3", "W4"), 
+          learners = lrnrs,
+          shift = static_binary_off,
+          outcome_type = "continuous") -> theta.none.sub
+  })
+
+```
+
+*Inverse probability weighting*
+```{r}
+with_progress({
+  lmtp_ipw(data = ObsData, trt = "A", outcome = "Y", 
+          baseline = c("W1", "W2", "W3", "W4"), 
+          learners = lrnrs,
+          shift = static_binary_on) -> theta.all.ipw
+  })
+
+with_progress({
+  lmtp_ipw(data = ObsData, trt = "A", outcome = "Y", 
+          baseline = c("W1", "W2", "W3", "W4"), 
+          learners = lrnrs,
+          shift = static_binary_off) -> theta.none.ipw
+  })
+
+``` 
+
+**6. Try to use the `lmtp_contrast` function on the G-compution and IPW estimates. What error do you get and why?**
+```{r, eval = F}
+lmtp_contrast(theta.all.sub, ref = theta.none.sub, 
+              type = "additive")
+
+lmtp_contrast(theta.all.ipw, ref = theta.none.ipw, 
+              type = "additive")
+```
+
+I got the error says "Contrasts not implemented for substitution/IPW estimators". This is because G-computation or IPW estimators are not asympotoically linear.   
+
+**7.** Pretend for a moment that your researchers you've been working with want to run a future study on child reading scores where there is both an intensive (every day for a week) reading intervention program, and a less intenvsive (one day) summer reading intervention program. Some students still do not enroll the reading program, so you will have an intervention with three levels instead of two. **Will you still be able to use the `lmtp` package to estimate the effects of each of the reading group interventions compared to no reading intervention? If yes, describe which functions you would use to compute this. If no, explain why it is impossible.**    
+
+Yes, I would use `lmtp_tmle` function to compute this by comparing each of the reading group interventions compared to no reading intervention separately. (Is this true?)    
+
+
+# `lmtp` for a continuous point treatment
+
+**8.** Assume you are interested in estimating the effect of an intervention that would decrease sodium intake by 500mg on everyone. **Do you see any issues with identifiability in this study design and scientific question?**      
+
+Yes, some people may have less then 500mg sodium intake, thus it is impossible to observe that these people have a 500mg decrease in sodium intake. This is a violation of positivity assumption.        
+
+**9. Run the below data generating code, then estimate the population mean blood pressure if all patients were to receive 500 mg less sodium in their breakfast meal.**
+
+```{r}
+n <- 2000
+W1 <- rbinom(n, 1, .5)
+W2 <- rnorm(n, mean=150 + W1*10, sd=10)
+W3 <- 2 / (rbinom(n, 1, .5) + 1) * W1 + 4 * rbinom(n, 1, plogis(W2/200)) +  2 / (rbinom(n, 1, .5) + 1) * rbinom(n, 1, plogis(W2/100)) * (W1 + 1)
+A <- rbinom(n, 1, plogis(W1 + W3/5)) * rnorm(n, mean=2000 - W2 + 200*W1, sd=200)
+Y <- rnorm(n, mean=W2 + W1*A/1000 + W3, sd=10)
+ObsData <- tibble(W1,W2,W3,A,Y)
+```
+
+```{r}
+shift.func <- function(data, trt){
+  max(data[[trt]] - 500, 500)
+}
+lmtp_tmle(data = ObsData, trt = "A", outcome = "Y", 
+          baseline = c("W1", "W2", "W3"), 
+          learners_outcome = lrnrs,
+          learners_trt = lrnrs,
+          shift = shift.func,
+          outcome_type = "continuous") -> theta.tmle
+
+```
+
+The estimated population mean blood pressure if all patients were to receive 500 mg less sodium in their breakfast meal is `r theta.tmle$theta`.   
+
+
+# `lmtp` for a continuous, modified point treatment
+
+**10. Verify that this is true in your data. What is wrong with the current estimate for question 9, since this is true?**
+```{r}
+sum(ObsData$A < 500)
+sum(ObsData$A == 0)
+```
+
+This is true in my data since the number of people who have zero sodium intake is equal to the number of people who have less than 500 sodium intake. Thus the current estimate for question 9 is wrong because it mistakenly invloved patients who can not have sodium intake.    
+
+**11. Refit your estimate from question 9 to instead be the population mean blood pressure when all patients’ sodium intake A is 500 mg lower, only if a patient has a sodium intake greater than 500 mg.**
+
+```{r}
+lmtp_tmle(data = ObsData[ObsData$A >500, ], 
+          trt = "A", outcome = "Y", 
+          baseline = c("W1", "W2", "W3"), 
+          learners_outcome = lrnrs,
+          learners_trt = lrnrs,
+          shift = shift.func,
+          outcome_type = "continuous") -> theta.tmle1
+
+```
+The estimated population mean blood pressure if all patients who had breakfast were to receive 500 mg less sodium in their breakfast meal is `r theta.tmle1$theta`.
+
+**12. Estimate the population mean blood pressure when all patients' sodium intake was what was actually, or naturally, observed.**   
+```{r}
+theta0 <- mean(ObsData$Y[ObsData$A > 500])
+```  
+The estimated population mean blood pressure when all patients' sodium intake was what was actually is `r theta0`.  
+
+**13. Use the `lmtp_contrast` function on your estimates from 11 and 12 to determine the ATE of the modified treatment policy of a 500 mg lower sodium intake for all patients who are able to eat. Interpret the results. Is there clinical meaning to the estimated causal change in blood pressure?**
+
+
+```{r}
+a <- lmtp_contrast(theta.tmle1, ref = theta0, type = "additive")
+a
+```
+
+The ATE of the modified treatment policy of a 500 mg lower sodium intake for all patients who are able to eat is `r a$vals$theta`. There is clinical meaning to the estimated causal change in blood pressure. Since less sodium intake has a causal relationship with lower blood pressure.    
+
+
